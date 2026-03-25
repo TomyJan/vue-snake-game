@@ -250,29 +250,73 @@ export function useGame() {
     }
   }
 
-  // === AI - Greedy Flood Fill Solver ===
+  // === AI - Hamiltonian Cycle with Shortcuts ===
   const DIR_PRIORITY: Direction[] = ['up', 'right', 'down', 'left']
+  let hamiltonianCycle: Position[] = []
+  let cycleIndex: Map<string, number> = new Map()
+
+  function posKey(p: Position): string { return `${p.x},${p.y}` }
 
   function nextPos(pos: Position, dir: Direction): Position {
     const d = DIRECTION_MAP[dir]
     return { x: pos.x + d.x, y: pos.y + d.y }
   }
 
-  function posKey(p: Position): string { return `${p.x},${p.y}` }
-
-  function buildOccupied(): Set<string> {
-    const s = new Set<string>()
-    for (let i = 0; i < state.snake.length - 1; i++) s.add(posKey(state.snake[i]))
-    for (const o of state.obstacles) s.add(posKey(o))
-    return s
-  }
-
   function isInBounds(p: Position): boolean {
     return p.x >= 0 && p.x < GAME_CONFIG.gridSize && p.y >= 0 && p.y < GAME_CONFIG.gridSize
   }
 
-  // BFS shortest path, returns first step direction or null
-  function bfsFirstStep(start: Position, target: Position, occupied: Set<string>): Direction | null {
+  // Build a Hamiltonian cycle using zigzag pattern
+  // For even-sized grids, this guarantees a cycle covering every cell
+  function buildHamiltonianCycle(): void {
+    const n = GAME_CONFIG.gridSize
+    const cycle: Position[] = []
+
+    // Zigzag: row 0 left→right, row 1 right→left, etc.
+    for (let y = 0; y < n; y++) {
+      if (y % 2 === 0) {
+        for (let x = 0; x < n; x++) cycle.push({ x, y })
+      } else {
+        for (let x = n - 1; x >= 0; x--) cycle.push({ x, y })
+      }
+    }
+
+    // For odd grids, zigzag doesn't connect end→start.
+    // Use a modified pattern that connects vertically at edges.
+    if (n % 2 !== 0) {
+      // Rebuild with column-first zigzag for odd grids
+      cycle.length = 0
+      for (let x = 0; x < n; x++) {
+        if (x % 2 === 0) {
+          for (let y = 0; y < n; y++) cycle.push({ x, y })
+        } else {
+          for (let y = n - 1; y >= 0; y--) cycle.push({ x, y })
+        }
+      }
+    }
+
+    hamiltonianCycle = cycle
+    cycleIndex = new Map()
+    for (let i = 0; i < cycle.length; i++) {
+      cycleIndex.set(posKey(cycle[i]), i)
+    }
+  }
+
+  // Get next position on the cycle
+  function cycleNext(pos: Position): Position {
+    const idx = cycleIndex.get(posKey(pos))
+    if (idx === undefined) return pos
+    return hamiltonianCycle[(idx + 1) % hamiltonianCycle.length]
+  }
+
+  function buildOccupied(): Set<string> {
+    const s = new Set<string>()
+    for (let i = 0; i < state.snake.length; i++) s.add(posKey(state.snake[i]))
+    for (const o of state.obstacles) s.add(posKey(o))
+    return s
+  }
+
+  function bfsPath(start: Position, target: Position, occupied: Set<string>): Direction | null {
     const visited = new Set<string>()
     const queue: { pos: Position; firstDir: Direction }[] = []
     visited.add(posKey(start))
@@ -282,26 +326,25 @@ export function useGame() {
       const k = posKey(n)
       if (isInBounds(n) && !occupied.has(k)) {
         visited.add(k)
+        if (positionsEqual(n, target)) return dir
         queue.push({ pos: n, firstDir: dir })
       }
     }
 
     while (queue.length > 0) {
       const { pos, firstDir } = queue.shift()!
-      if (positionsEqual(pos, target)) return firstDir
-
       for (const dir of DIR_PRIORITY) {
         const n = nextPos(pos, dir)
         const k = posKey(n)
         if (visited.has(k) || !isInBounds(n) || occupied.has(k)) continue
         visited.add(k)
+        if (positionsEqual(n, target)) return firstDir
         queue.push({ pos: n, firstDir })
       }
     }
     return null
   }
 
-  // Flood fill: count reachable cells from start
   function floodFill(start: Position, occupied: Set<string>): number {
     const visited = new Set<string>()
     const queue: Position[] = [start]
@@ -320,58 +363,70 @@ export function useGame() {
     return visited.size
   }
 
+  function dirBetween(from: Position, to: Position): Direction | null {
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    if (dx === 1 && dy === 0) return 'right'
+    if (dx === -1 && dy === 0) return 'left'
+    if (dx === 0 && dy === 1) return 'down'
+    if (dx === 0 && dy === -1) return 'up'
+    return null
+  }
+
   function findSafeDirection(): Direction {
     const headPos = head.value
     if (!headPos) return 'right'
+    if (hamiltonianCycle.length === 0) buildHamiltonianCycle()
 
-    const occupied = buildOccupied()
+    const headKey = posKey(headPos)
     const foodPos = state.food.pos
+    const occupied = buildOccupied()
     const snakeLen = state.snake.length
 
-    // Get valid next moves
-    const validMoves = DIR_PRIORITY
-      .filter(d => {
-        const n = nextPos(headPos, d)
-        return isInBounds(n) && !occupied.has(posKey(n))
-      })
-
-    if (validMoves.length === 0) return state.direction
-
-    // Strategy 1: Go to food if flood fill after eating > snake length (safe margin)
-    const foodDir = bfsFirstStep(headPos, foodPos, occupied)
+    // 1. Try shortcut to food: BFS path + safety check
+    const foodDir = bfsPath(headPos, foodPos, occupied)
     if (foodDir) {
       const foodNext = nextPos(headPos, foodDir)
-      // Simulate: new head at foodNext, snake grows by 1
+      // After eating: snake grows, tail stays
       const newOccupied = new Set(occupied)
       newOccupied.add(posKey(foodNext))
-      // Snake grows so tail stays - but on NEXT move tail will be removed
-      // So check flood fill without removing tail (conservative)
       const space = floodFill(foodNext, newOccupied)
-      if (space > snakeLen * 1.5) {
+      if (space > snakeLen + 5) {
         return foodDir
       }
     }
 
-    // Strategy 2: Maximize reachable space (stay alive)
-    let bestDir = validMoves[0]
-    let bestSpace = 0
+    // 2. Follow Hamiltonian cycle
+    const nextOnCycle = cycleNext(headPos)
+    const nextKey = posKey(nextOnCycle)
+    if (!occupied.has(nextKey) && isInBounds(nextOnCycle)) {
+      return dirBetween(headPos, nextOnCycle) ?? 'right'
+    }
 
-    for (const dir of validMoves) {
-      const n = nextPos(headPos, dir)
-      // Simulate: move there, tail gets removed
-      const newOccupied = new Set(occupied)
-      const tailPos = state.snake[snakeLen - 1]
-      newOccupied.delete(posKey(tailPos))
-      newOccupied.add(posKey(n))
-      const space = floodFill(n, newOccupied)
-      if (space > bestSpace) {
-        bestSpace = space
-        bestDir = dir
+    // 3. Cycle blocked: BFS to next free cell on cycle
+    // Find the nearest unoccupied cell ahead on the cycle
+    const cycleLen = hamiltonianCycle.length
+    const startIdx = cycleIndex.get(headKey) ?? 0
+    for (let offset = 1; offset < cycleLen; offset++) {
+      const targetIdx = (startIdx + offset) % cycleLen
+      const target = hamiltonianCycle[targetIdx]
+      if (!occupied.has(posKey(target)) && isInBounds(target)) {
+        const dir = bfsPath(headPos, target, occupied)
+        if (dir) return dir
       }
     }
 
-    return bestDir
+    // 4. Emergency: any safe direction
+    for (const dir of DIR_PRIORITY) {
+      const n = nextPos(headPos, dir)
+      if (isInBounds(n) && !occupied.has(posKey(n))) return dir
+    }
+
+    return 'right'
   }
+
+  // Initialize cycle
+  buildHamiltonianCycle()
 
   function aiTick() {
     if (state.status !== 'playing') return
