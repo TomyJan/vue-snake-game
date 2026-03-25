@@ -3,11 +3,18 @@ import type { GameConfig, ThemeConfig, Direction, Position } from '../types/game
 export const GAME_CONFIG: GameConfig = {
   gridSize: 20,
   cellSize: 24,
-  initialSpeed: 150,
+  initialSpeed: 200,
   speedIncrement: 5,
-  maxSpeed: 60,
+  maxSpeed: 80,
   initialLength: 3,
 }
+
+export const SPEED_LEVELS = [
+  { label: 'Slow', speed: 280 },
+  { label: 'Normal', speed: 200 },
+  { label: 'Fast', speed: 130 },
+  { label: 'Insane', speed: 80 },
+] as const
 
 export const DIRECTION_MAP: Record<Direction, Position> = {
   up: { x: 0, y: -1 },
