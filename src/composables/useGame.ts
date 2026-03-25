@@ -293,33 +293,42 @@ export function useGame() {
     return null
   }
 
-  // BFS longest-ish path (heuristic: prefer far cells, extend greedily)
-  function bfsFarthest(start: Position, occupied: Set<string>): Position[] | null {
+  // BFS find longest path from start to target (heuristic DFS)
+  function bfsLongest(start: Position, target: Position, occupied: Set<string>): Position[] | null {
     const visited = new Set<string>()
-    let bestPath: Position[] = []
-    const queue: { pos: Position; path: Position[] }[] = [{ pos: start, path: [] }]
-    visited.add(posKey(start))
+    let bestPath: Position[] | null = null
 
-    while (queue.length > 0) {
-      const { pos, path } = queue.shift()!
-      if (path.length > bestPath.length) bestPath = path
+    function dfs(pos: Position, path: Position[]) {
+      if (positionsEqual(pos, target)) {
+        if (!bestPath || path.length > bestPath.length) {
+          bestPath = [...path]
+        }
+        return
+      }
+      if (path.length > occupied.size * 0.8) return // cap depth to avoid timeout
 
       for (const dir of DIR_PRIORITY) {
         const n = nextPos(pos, dir)
         const k = posKey(n)
         if (visited.has(k) || !isFree(n, occupied)) continue
         visited.add(k)
-        queue.push({ pos: n, path: [...path, n] })
+        path.push(n)
+        dfs(n, path)
+        path.pop()
+        visited.delete(k)
       }
     }
-    return bestPath.length > 0 ? bestPath : null
+
+    visited.add(posKey(start))
+    dfs(start, [])
+    return bestPath
   }
 
   // Simulate snake after eating along a path
   function simulateAfterPath(path: Position[]): { head: Position; occupied: Set<string> } | null {
     if (path.length === 0) return null
     const newHead = path[path.length - 1]
-    // Snake grows: new head added, old tail NOT removed
+    // Snake grows: all old segments + new head are occupied
     const newOccupied = new Set<string>()
     for (const seg of state.snake) newOccupied.add(posKey(seg))
     for (const o of state.obstacles) newOccupied.add(posKey(o))
@@ -344,40 +353,54 @@ export function useGame() {
     const occupied = buildOccupied()
     const foodPos = state.food.pos
 
-    // 1. Try shortest path to food
+    // 1. Try path to food
     const foodPath = bfsPath(headPos, foodPos, occupied)
     if (foodPath && foodPath.length > 0) {
-      // Simulate: after eating, can we still reach tail?
       const sim = simulateAfterPath(foodPath)
       if (sim) {
-        // Add old tail back (it will be removed on next move since snake didn't grow yet)
-        // Actually: after eating, snake grows by 1. So tail stays.
-        // We need to check if there's ANY path from new head to the tail
+        // After eating, tail stays. Check if we can reach tail via LONGEST path.
         const tailPos = state.snake[state.snake.length - 1]
-        // Remove old tail from occupied since next move will pop it
+        // Allow BFS to pass through tail position (it's about to become free)
         sim.occupied.delete(posKey(tailPos))
-        const pathToTail = bfsPath(sim.head, tailPos, sim.occupied)
-        if (pathToTail) {
+        const safeLongest = bfsLongest(sim.head, tailPos, sim.occupied)
+        if (safeLongest && safeLongest.length > 0) {
           const d = dirOf(headPos, foodPath[0])
           if (d) return d
         }
       }
     }
 
-    // 2. No safe food path: find farthest reachable space (stay alive)
-    const farPath = bfsFarthest(headPos, occupied)
-    if (farPath && farPath.length > 0) {
-      const d = dirOf(headPos, farPath[0])
-      if (d) return d
+    // 2. No safe food path: try to reach own tail via longest path
+    if (state.snake.length > 1) {
+      const tailPos = state.snake[state.snake.length - 1]
+      const tailPath = bfsLongest(headPos, tailPos, occupied)
+      if (tailPath && tailPath.length > 0) {
+        const d = dirOf(headPos, tailPath[0])
+        if (d) return d
+      }
     }
 
-    // 3. Last resort: any safe direction
+    // 3. Fallback: safest immediate direction
+    let bestDir = state.direction
+    let bestScore = -1
     for (const dir of DIR_PRIORITY) {
       const n = nextPos(headPos, dir)
-      if (isFree(n, occupied)) return dir
+      if (!isFree(n, occupied)) continue
+      // Score: count free neighbors of next position
+      let score = 0
+      for (const d2 of DIR_PRIORITY) {
+        const nn = nextPos(n, d2)
+        if (isFree(nn, occupied)) score++
+      }
+      // Prefer staying away from food when trapped
+      const dist = Math.abs(n.x - foodPos.x) + Math.abs(n.y - foodPos.y)
+      score = score * 100 + dist
+      if (score > bestScore) {
+        bestScore = score
+        bestDir = dir
+      }
     }
-
-    return state.direction // will die
+    return bestDir
   }
 
   function aiTick() {
