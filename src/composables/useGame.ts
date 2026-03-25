@@ -320,12 +320,12 @@ export function useGame() {
     const hp = head.value
     if (!hp) return 'right'
 
-    // Build blocked set: body + obstacles
-    // After eating (tailFrozen), tail is still part of body → include it
+    // Build blocked set: body (skip head at [0]) + obstacles
+    // After eating (tailFrozen), include tail too
     const blocked = new Set<string>()
     const excludeTail = !tailFrozen
     const bodyEnd = excludeTail ? state.snake.length - 1 : state.snake.length
-    for (let i = 0; i < bodyEnd; i++) {
+    for (let i = 1; i < bodyEnd; i++) {
       blocked.add(key(state.snake[i].x, state.snake[i].y))
     }
     for (const o of state.obstacles) blocked.add(key(o.x, o.y))
