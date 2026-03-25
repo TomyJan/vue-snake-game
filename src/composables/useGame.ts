@@ -250,164 +250,134 @@ export function useGame() {
     }
   }
 
-  // === AI ===
-  const ALL_DIRS: Direction[] = ['up', 'down', 'left', 'right']
+  // === AI - Greedy Solver with Tail Safety ===
+  const DIR_PRIORITY: Direction[] = ['up', 'right', 'down', 'left']
 
-  function getNextPosition(pos: Position, dir: Direction): Position {
-    const delta = DIRECTION_MAP[dir]
-    return { x: pos.x + delta.x, y: pos.y + delta.y }
+  function nextPos(pos: Position, dir: Direction): Position {
+    const d = DIRECTION_MAP[dir]
+    return { x: pos.x + d.x, y: pos.y + d.y }
   }
 
-  function isSafe(pos: Position): boolean {
-    if (pos.x < 0 || pos.x >= GAME_CONFIG.gridSize || pos.y < 0 || pos.y >= GAME_CONFIG.gridSize) return false
-    if (state.snake.some((seg) => positionsEqual(seg, pos))) return false
-    if (state.obstacles.some((o) => positionsEqual(o, pos))) return false
-    return true
+  function posKey(p: Position): string { return `${p.x},${p.y}` }
+
+  function isFree(p: Position, occupied: Set<string>): boolean {
+    if (p.x < 0 || p.x >= GAME_CONFIG.gridSize || p.y < 0 || p.y >= GAME_CONFIG.gridSize) return false
+    return !occupied.has(posKey(p))
   }
 
-  // Build a set of occupied positions for fast lookup
-  function buildOccupiedSet(extraExclude?: Position): Set<string> {
+  function buildOccupied(): Set<string> {
     const s = new Set<string>()
-    for (const seg of state.snake) s.add(`${seg.x},${seg.y}`)
-    for (const o of state.obstacles) s.add(`${o.x},${o.y}`)
-    if (extraExclude) s.add(`${extraExclude.x},${extraExclude.y}`)
+    for (let i = 0; i < state.snake.length - 1; i++) s.add(posKey(state.snake[i]))
+    for (const o of state.obstacles) s.add(posKey(o))
     return s
   }
 
-  // BFS pathfinding, returns full path or null
-  function bfs(start: Position, target: Position, occupied?: Set<string>): Position[] | null {
-    const occ = occupied || buildOccupiedSet()
+  // BFS shortest path, returns array of positions (excluding start)
+  function bfsPath(start: Position, target: Position, occupied: Set<string>): Position[] | null {
     const visited = new Set<string>()
     const queue: { pos: Position; path: Position[] }[] = [{ pos: start, path: [] }]
-    visited.add(`${start.x},${start.y}`)
+    visited.add(posKey(start))
 
     while (queue.length > 0) {
       const { pos, path } = queue.shift()!
       if (positionsEqual(pos, target)) return path
 
-      for (const dir of ALL_DIRS) {
-        const next = getNextPosition(pos, dir)
-        const key = `${next.x},${next.y}`
-        if (visited.has(key)) continue
-        if (next.x < 0 || next.x >= GAME_CONFIG.gridSize || next.y < 0 || next.y >= GAME_CONFIG.gridSize) continue
-        if (occ.has(key)) continue
-        visited.add(key)
-        queue.push({ pos: next, path: [...path, next] })
+      for (const dir of DIR_PRIORITY) {
+        const n = nextPos(pos, dir)
+        const k = posKey(n)
+        if (visited.has(k) || !isFree(n, occupied)) continue
+        visited.add(k)
+        queue.push({ pos: n, path: [...path, n] })
       }
     }
     return null
   }
 
-  // Count reachable cells from a position
-  function countReachable(start: Position, occupied: Set<string>): number {
+  // BFS longest-ish path (heuristic: prefer far cells, extend greedily)
+  function bfsFarthest(start: Position, occupied: Set<string>): Position[] | null {
     const visited = new Set<string>()
-    const queue: Position[] = [start]
-    visited.add(`${start.x},${start.y}`)
+    let bestPath: Position[] = []
+    const queue: { pos: Position; path: Position[] }[] = [{ pos: start, path: [] }]
+    visited.add(posKey(start))
 
     while (queue.length > 0) {
-      const pos = queue.shift()!
-      for (const dir of ALL_DIRS) {
-        const next = getNextPosition(pos, dir)
-        const key = `${next.x},${next.y}`
-        if (visited.has(key)) continue
-        if (next.x < 0 || next.x >= GAME_CONFIG.gridSize || next.y < 0 || next.y >= GAME_CONFIG.gridSize) continue
-        if (occupied.has(key)) continue
-        visited.add(key)
-        queue.push(next)
+      const { pos, path } = queue.shift()!
+      if (path.length > bestPath.length) bestPath = path
+
+      for (const dir of DIR_PRIORITY) {
+        const n = nextPos(pos, dir)
+        const k = posKey(n)
+        if (visited.has(k) || !isFree(n, occupied)) continue
+        visited.add(k)
+        queue.push({ pos: n, path: [...path, n] })
       }
     }
-    return visited.size
+    return bestPath.length > 0 ? bestPath : null
   }
 
-  // Simulate snake after moving to a position (removes tail if not eating)
-  function simulateSnakeAfterMove(newHead: Position, willEat: boolean): Position[] {
-    const simSnake = [newHead, ...state.snake]
-    if (!willEat) simSnake.pop()
-    return simSnake
+  // Simulate snake after eating along a path
+  function simulateAfterPath(path: Position[]): { head: Position; occupied: Set<string> } | null {
+    if (path.length === 0) return null
+    const newHead = path[path.length - 1]
+    // Snake grows: new head added, old tail NOT removed
+    const newOccupied = new Set<string>()
+    for (const seg of state.snake) newOccupied.add(posKey(seg))
+    for (const o of state.obstacles) newOccupied.add(posKey(o))
+    newOccupied.add(posKey(newHead))
+    return { head: newHead, occupied: newOccupied }
   }
 
-  // Check if snake can reach its own tail after a move
-  function canReachTail(newHead: Position, willEat: boolean): boolean {
-    const simSnake = simulateSnakeAfterMove(newHead, willEat)
-    if (simSnake.length <= 1) return true
-    const tail = simSnake[simSnake.length - 1]
-
-    // Build occupied set from simulated snake (excluding tail)
-    const occupied = new Set<string>()
-    for (let i = 0; i < simSnake.length - 1; i++) {
-      occupied.add(`${simSnake[i].x},${simSnake[i].y}`)
-    }
-    for (const o of state.obstacles) occupied.add(`${o.x},${o.y}`)
-
-    return bfs(newHead, tail, occupied) !== null
+  function dirOf(from: Position, to: Position): Direction | null {
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    if (dx === 1 && dy === 0) return 'right'
+    if (dx === -1 && dy === 0) return 'left'
+    if (dx === 0 && dy === 1) return 'down'
+    if (dx === 0 && dy === -1) return 'up'
+    return null
   }
 
   function findSafeDirection(): Direction {
-    const currentHead = head.value
-    if (!currentHead) return 'right'
+    const headPos = head.value
+    if (!headPos) return 'right'
 
-    const current = state.direction
+    const occupied = buildOccupied()
     const foodPos = state.food.pos
-    const snakeLen = state.snake.length
 
-    // Get safe next moves
-    const safeMoves = ALL_DIRS
-      .filter(d => d !== OPPOSITE_DIRECTION[current])
-      .map(d => ({ dir: d, pos: getNextPosition(currentHead, d) }))
-      .filter(m => isSafe(m.pos))
-
-    if (safeMoves.length === 0) {
-      // No safe moves, try reverse as last resort
-      for (const d of ALL_DIRS) {
-        if (isSafe(getNextPosition(currentHead, d))) return d
-      }
-      return current // will die
-    }
-
-    // Strategy 1: Find path to food, verify tail is still reachable after eating
-    const occupied = buildOccupiedSet()
-    const pathToFood = bfs(currentHead, foodPos, occupied)
-    if (pathToFood && pathToFood.length > 0) {
-      const nextStep = pathToFood[0]
-      const willEat = positionsEqual(nextStep, foodPos)
-      if (canReachTail(nextStep, willEat)) {
-        // Safe to go for food
-        const dir = ALL_DIRS.find(d =>
-          positionsEqual(getNextPosition(currentHead, d), nextStep)
-        )
-        if (dir) return dir
+    // 1. Try shortest path to food
+    const foodPath = bfsPath(headPos, foodPos, occupied)
+    if (foodPath && foodPath.length > 0) {
+      // Simulate: after eating, can we still reach tail?
+      const sim = simulateAfterPath(foodPath)
+      if (sim) {
+        // Add old tail back (it will be removed on next move since snake didn't grow yet)
+        // Actually: after eating, snake grows by 1. So tail stays.
+        // We need to check if there's ANY path from new head to the tail
+        const tailPos = state.snake[state.snake.length - 1]
+        // Remove old tail from occupied since next move will pop it
+        sim.occupied.delete(posKey(tailPos))
+        const pathToTail = bfsPath(sim.head, tailPos, sim.occupied)
+        if (pathToTail) {
+          const d = dirOf(headPos, foodPath[0])
+          if (d) return d
+        }
       }
     }
 
-    // Strategy 2: Chase own tail - keeps us alive longest
-    if (snakeLen > 1) {
-      const tail = state.snake[snakeLen - 1]
-      const pathToTail = bfs(currentHead, tail, occupied)
-      if (pathToTail && pathToTail.length > 0) {
-        const nextStep = pathToTail[0]
-        const dir = ALL_DIRS.find(d =>
-          positionsEqual(getNextPosition(currentHead, d), nextStep)
-        )
-        if (dir) return dir
-      }
+    // 2. No safe food path: find farthest reachable space (stay alive)
+    const farPath = bfsFarthest(headPos, occupied)
+    if (farPath && farPath.length > 0) {
+      const d = dirOf(headPos, farPath[0])
+      if (d) return d
     }
 
-    // Strategy 3: Pick direction with most reachable space
-    let bestDir = safeMoves[0].dir
-    let bestSpace = 0
-
-    for (const m of safeMoves) {
-      const newOccupied = new Set(occupied)
-      newOccupied.delete(`${state.snake[snakeLen - 1].x},${state.snake[snakeLen - 1].y}`)
-      newOccupied.add(`${m.pos.x},${m.pos.y}`)
-      const space = countReachable(m.pos, newOccupied)
-      if (space > bestSpace) {
-        bestSpace = space
-        bestDir = m.dir
-      }
+    // 3. Last resort: any safe direction
+    for (const dir of DIR_PRIORITY) {
+      const n = nextPos(headPos, dir)
+      if (isFree(n, occupied)) return dir
     }
 
-    return bestDir
+    return state.direction // will die
   }
 
   function aiTick() {
