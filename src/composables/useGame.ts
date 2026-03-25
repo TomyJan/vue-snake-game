@@ -1,5 +1,5 @@
-import { ref, reactive, computed, watch, onUnmounted } from 'vue'
-import type { GameState, Direction, Position, GameStatus } from '../types/game'
+import { ref, reactive, computed, onUnmounted } from 'vue'
+import type { GameState, Direction, Position } from '../types/game'
 import { GAME_CONFIG, DIRECTION_MAP, OPPOSITE_DIRECTION, KEY_DIRECTION_MAP } from '../utils/constants'
 import { randomPosition, positionsEqual, clampSpeed } from '../utils/helpers'
 

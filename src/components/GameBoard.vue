@@ -8,7 +8,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, computed } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import type { Position } from '../types/game'
 import { GAME_CONFIG, DARK_THEME, LIGHT_THEME } from '../utils/constants'
 import { useTheme } from '../composables/useTheme'
@@ -118,7 +118,7 @@ function draw() {
   }
 }
 
-let animFrame: number
+let animFrame = 0
 function animate() {
   draw()
   animFrame = requestAnimationFrame(animate)
@@ -126,6 +126,10 @@ function animate() {
 
 onMounted(() => {
   animate()
+})
+
+onUnmounted(() => {
+  cancelAnimationFrame(animFrame)
 })
 
 // Redraw when snake or food changes
