@@ -1,10 +1,11 @@
 import { ref, reactive, computed, onUnmounted } from 'vue'
 import type { GameState, Direction, Position, Food } from '../types/game'
 import { GAME_CONFIG, DIRECTION_MAP, OPPOSITE_DIRECTION, KEY_DIRECTION_MAP, OBSTACLE_COUNT } from '../utils/constants'
-import { positionsEqual, clampSpeed, spawnFood, generateObstacles } from '../utils/helpers'
+import { positionsEqual, spawnFood, generateObstacles } from '../utils/helpers'
 
 const HIGH_SCORE_KEY = 'snake-high-score'
 const START_DELAY_MS = 800
+const SLOW_BUFF_DURATION = 5000
 
 export function useGame() {
   const highScore = ref(Number(localStorage.getItem(HIGH_SCORE_KEY)) || 0)
@@ -26,7 +27,8 @@ export function useGame() {
   })
 
   let gameTimer: ReturnType<typeof setInterval> | null = null
-  let startTimer: ReturnType<typeof setTimeout> | null = null
+  let startDelayTimer: ReturnType<typeof setTimeout> | null = null
+  let slowBuffTimer: ReturnType<typeof setTimeout> | null = null
   let particleTimer: ReturnType<typeof setInterval> | null = null
   const aiEnabled = ref(false)
   let aiInterval: ReturnType<typeof setInterval> | null = null
@@ -56,7 +58,7 @@ export function useGame() {
     state.particles = []
     state.status = 'starting'
 
-    startTimer = setTimeout(() => {
+    startDelayTimer = setTimeout(() => {
       if (state.status === 'starting') {
         state.status = 'playing'
         startGameTimer()
@@ -64,6 +66,12 @@ export function useGame() {
         if (aiEnabled.value) startAI()
       }
     }, START_DELAY_MS)
+  }
+
+  function endGame() {
+    clearTimers()
+    stopAI()
+    state.status = 'idle'
   }
 
   function pauseGame() {
@@ -122,10 +130,20 @@ export function useGame() {
       p.life -= 0.04
       p.vx *= 0.96
       p.vy *= 0.96
-      if (p.life <= 0) {
-        state.particles.splice(i, 1)
-      }
+      if (p.life <= 0) state.particles.splice(i, 1)
     }
+  }
+
+  function applySlowBuff() {
+    // Temporary speed reduction
+    state.speed = Math.min(baseSpeed.value + 60, 350)
+    restartGameTimer()
+    if (slowBuffTimer) clearTimeout(slowBuffTimer)
+    slowBuffTimer = setTimeout(() => {
+      // Revert to base speed
+      state.speed = baseSpeed.value
+      if (state.status === 'playing') restartGameTimer()
+    }, SLOW_BUFF_DURATION)
   }
 
   function moveSnake(): { hit?: boolean; ate?: boolean } {
@@ -154,38 +172,31 @@ export function useGame() {
       return { hit: true }
     }
 
-    // Check food
-    const ate = positionsEqual(newHead, state.food.pos)
-
     // Check bonus food expiry
     if (state.food.expiresAt && Date.now() > state.food.expiresAt) {
       state.food = spawnFood(GAME_CONFIG.gridSize, state.snake, state.obstacles)
     }
 
+    // Check food
+    const ate = positionsEqual(newHead, state.food.pos)
     state.snake.unshift(newHead)
 
     if (ate) {
       let points = 10
       let color = '#ff4444'
+      let particleCount = 8
 
       if (state.food.type === 'bonus') {
         points = 30
         color = '#ffd700'
+        particleCount = 16
       } else if (state.food.type === 'slow') {
-        points = 10
         color = '#4488ff'
-        state.speed = Math.min(state.speed + 30, 300)
-        restartGameTimer()
+        applySlowBuff()
       }
 
       state.score += points
-      emitParticles(state.food.pos.x, state.food.pos.y, color, state.food.type === 'bonus' ? 16 : 8)
-
-      if (state.food.type === 'normal') {
-        state.speed = clampSpeed(state.score, GAME_CONFIG)
-        restartGameTimer()
-      }
-
+      emitParticles(state.food.pos.x, state.food.pos.y, color, particleCount)
       state.food = spawnFood(GAME_CONFIG.gridSize, state.snake, state.obstacles)
       return { ate: true }
     } else {
@@ -219,7 +230,8 @@ export function useGame() {
   function clearTimers() {
     stopGameTimer()
     stopParticleTimer()
-    if (startTimer) { clearTimeout(startTimer); startTimer = null }
+    if (startDelayTimer) { clearTimeout(startDelayTimer); startDelayTimer = null }
+    if (slowBuffTimer) { clearTimeout(slowBuffTimer); slowBuffTimer = null }
   }
 
   function setDirection(dir: Direction) {
@@ -256,7 +268,6 @@ export function useGame() {
     const queue: { pos: Position; path: Direction[] }[] = [{ pos: start, path: [] }]
     visited.add(`${start.x},${start.y}`)
     const dirs: Direction[] = ['up', 'down', 'left', 'right']
-
     while (queue.length > 0) {
       const { pos, path } = queue.shift()!
       if (positionsEqual(pos, target)) return path[0] || null
@@ -277,7 +288,6 @@ export function useGame() {
     const queue: Position[] = [start]
     visited.add(`${start.x},${start.y}`)
     const dirs: Direction[] = ['up', 'down', 'left', 'right']
-
     while (queue.length > 0) {
       const pos = queue.shift()!
       for (const dir of dirs) {
@@ -300,15 +310,12 @@ export function useGame() {
       const foodDir = bfs(head.value, state.food.pos)
       if (foodDir) {
         const nextPos = getNextPosition(head.value, foodDir)
-        if (isSafe(nextPos)) {
-          // Check if reaching food leaves us in a safe area
-          const reachable = countReachable(nextPos)
-          if (reachable > state.snake.length) return foodDir
+        if (isSafe(nextPos) && countReachable(nextPos) > state.snake.length) {
+          return foodDir
         }
       }
     }
 
-    // Pick direction with most reachable space
     let bestDir = current
     let bestReachable = 0
     for (const dir of dirs) {
@@ -356,7 +363,7 @@ export function useGame() {
 
   return {
     state, head, length, aiEnabled, baseSpeed,
-    startGame, pauseGame, resumeGame, togglePause,
+    startGame, endGame, pauseGame, resumeGame, togglePause,
     setDirection, handleKeydown, moveSnake,
     toggleAI, setSpeed,
   }
