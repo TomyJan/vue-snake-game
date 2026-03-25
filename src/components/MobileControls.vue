@@ -1,100 +1,138 @@
 <template>
-  <div class="mobile-controls">
-    <div class="joystick">
-      <button class="j-btn up" @touchstart.prevent="press('up')" @mousedown.prevent="press('up')">
-        <span class="arrow">▲</span>
-      </button>
-      <div class="j-middle">
-        <button class="j-btn left" @touchstart.prevent="press('left')" @mousedown.prevent="press('left')">
-          <span class="arrow">◄</span>
-        </button>
-        <div class="j-center"></div>
-        <button class="j-btn right" @touchstart.prevent="press('right')" @mousedown.prevent="press('right')">
-          <span class="arrow">►</span>
-        </button>
-      </div>
-      <button class="j-btn down" @touchstart.prevent="press('down')" @mousedown.prevent="press('down')">
-        <span class="arrow">▼</span>
-      </button>
+  <div
+    v-if="active"
+    class="joystick-overlay"
+    @touchmove.prevent
+    @touchend="onRelease"
+    @touchcancel="onRelease"
+  >
+    <div
+      class="joystick-base"
+      :style="{ left: originX + 'px', top: originY + 'px' }"
+    >
+      <div
+        class="joystick-thumb"
+        :style="{ transform: `translate(${thumbX}px, ${thumbY}px)` }"
+      ></div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue'
 import type { Direction } from '../types/game'
 
 const emit = defineEmits<{
   direction: [dir: Direction]
 }>()
 
-function press(dir: Direction) {
-  emit('direction', dir)
-}
-</script>
+const active = ref(false)
+const originX = ref(0)
+const originY = ref(0)
+const thumbX = ref(0)
+const thumbY = ref(0)
 
-<style scoped>
-.mobile-controls {
-  display: none;
-  justify-content: center;
-  margin-top: 16px;
-  user-select: none;
-  -webkit-user-select: none;
+const MAX_RADIUS = 40
+const DEAD_ZONE = 10
+let currentTouchId: number | null = null
+
+function onTouchStart(e: TouchEvent) {
+  // Ignore if touching buttons/controls
+  const target = e.target as HTMLElement
+  if (target.closest('button, select, a, details, .game-controls')) return
+
+  const touch = e.changedTouches[0]
+  currentTouchId = touch.identifier
+  originX.value = touch.clientX
+  originY.value = touch.clientY
+  thumbX.value = 0
+  thumbY.value = 0
+  active.value = true
 }
 
-@media (max-width: 600px), (pointer: coarse) {
-  .mobile-controls {
-    display: flex;
+function onTouchMove(e: TouchEvent) {
+  if (!active.value) return
+  const touch = Array.from(e.changedTouches).find(t => t.identifier === currentTouchId)
+  if (!touch) return
+
+  let dx = touch.clientX - originX.value
+  let dy = touch.clientY - originY.value
+
+  // Clamp to max radius
+  const dist = Math.sqrt(dx * dx + dy * dy)
+  if (dist > MAX_RADIUS) {
+    dx = (dx / dist) * MAX_RADIUS
+    dy = (dy / dist) * MAX_RADIUS
+  }
+
+  thumbX.value = dx
+  thumbY.value = dy
+
+  // Determine direction if past dead zone
+  if (dist > DEAD_ZONE) {
+    if (Math.abs(dx) > Math.abs(dy)) {
+      emit('direction', dx > 0 ? 'right' : 'left')
+    } else {
+      emit('direction', dy > 0 ? 'down' : 'up')
+    }
   }
 }
 
-.joystick {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
+function onRelease() {
+  active.value = false
+  thumbX.value = 0
+  thumbY.value = 0
+  currentTouchId = null
 }
 
-.j-middle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+onMounted(() => {
+  document.addEventListener('touchstart', onTouchStart, { passive: false })
+  document.addEventListener('touchmove', onTouchMove, { passive: false })
+})
+
+onUnmounted(() => {
+  document.removeEventListener('touchstart', onTouchStart)
+  document.removeEventListener('touchmove', onTouchMove)
+})
+</script>
+
+<style scoped>
+.joystick-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  touch-action: none;
 }
 
-.j-center {
-  width: 56px;
-  height: 56px;
+.joystick-base {
+  position: fixed;
+  width: 100px;
+  height: 100px;
   border-radius: 50%;
-  background: var(--card);
-  border: 2px solid var(--card-border);
-  opacity: 0.5;
-}
-
-.j-btn {
-  width: 60px;
-  height: 60px;
-  border-radius: 14px;
-  border: 2px solid var(--card-border);
-  background: var(--card);
-  color: var(--text);
-  font-size: 22px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: manipulation;
-  transition: all 0.1s;
-}
-
-.j-btn:active {
-  background: var(--accent);
-  color: #000;
-  border-color: var(--accent);
-  transform: scale(0.92);
-}
-
-.arrow {
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  transform: translate(-50%, -50%);
   pointer-events: none;
+}
+
+.joystick-thumb {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  top: 50%;
+  left: 50%;
+  margin-top: -22px;
+  margin-left: -22px;
+  transition: none;
+  pointer-events: none;
+}
+
+@media (pointer: fine) {
+  .joystick-overlay {
+    display: none !important;
+  }
 }
 </style>
