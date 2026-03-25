@@ -24,12 +24,14 @@
         :sound-enabled="soundEnabled"
         :theme="theme"
         :ai-enabled="aiEnabled"
+        :current-speed="baseSpeed"
         @start="onStart"
         @restart="onRestart"
         @toggle-pause="onTogglePause"
         @toggle-sound="onToggleSound"
         @toggle-theme="onToggleTheme"
         @toggle-ai="onToggleAI"
+        @set-speed="onSetSpeed"
       />
 
       <MobileControls @direction="onDirection" />
@@ -58,6 +60,10 @@
         </div>
       </details>
     </footer>
+
+    <div class="version">
+      <a :href="commitUrl" target="_blank" rel="noopener">v{{ version }}</a>
+    </div>
 
     <GameOverModal
       :show="showGameOverModal"
@@ -91,24 +97,28 @@ const {
   setDirection,
   handleKeydown,
   toggleAI,
+  setSpeed,
   aiEnabled,
+  baseSpeed,
   length: snakeLength,
 } = useGame()
 
 const { theme, toggleTheme } = useTheme()
 const { enabled: soundEnabled, toggleSound, playStart, playEat, playHit } = useSound()
 
+// Version info
+const version = __APP_VERSION__
+const commitUrl = `https://github.com/TomyJan/vue-snake-game/commit/${__APP_COMMIT__}`
+
 const isNewHighScore = computed(() =>
   state.status === 'gameover' && state.score > 0 && state.score >= state.highScore
 )
 
-// Delay modal appearance to prevent flash on quick restart
 const showGameOverModal = ref(false)
 let gameOverTimeout: ReturnType<typeof setTimeout> | null = null
 
 watch(() => state.status, (newStatus, oldStatus) => {
   if (newStatus === 'gameover' && oldStatus === 'playing') {
-    // Show modal after a short delay
     gameOverTimeout = setTimeout(() => {
       showGameOverModal.value = true
     }, 100)
@@ -132,21 +142,11 @@ function onRestart() {
   startGame()
 }
 
-function onTogglePause() {
-  togglePause()
-}
-
-function onToggleSound() {
-  toggleSound()
-}
-
-function onToggleTheme() {
-  toggleTheme()
-}
-
-function onToggleAI() {
-  toggleAI()
-}
+function onTogglePause() { togglePause() }
+function onToggleSound() { toggleSound() }
+function onToggleTheme() { toggleTheme() }
+function onToggleAI() { toggleAI() }
+function onSetSpeed(speed: number) { setSpeed(speed) }
 
 function onDirection(dir: Direction) {
   if (state.status === 'idle' || state.status === 'starting') {
@@ -161,9 +161,7 @@ let prevLength = 3
 let prevStatus = 'idle'
 
 onMounted(() => {
-  nextTick(() => {
-    appRef.value?.focus()
-  })
+  nextTick(() => { appRef.value?.focus() })
 
   setInterval(() => {
     if (state.snake.length > prevLength) {
@@ -203,7 +201,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 24px 16px;
+  padding: 24px 16px 40px;
   background: var(--bg);
   color: var(--text);
   outline: none;
@@ -293,5 +291,21 @@ kbd {
   .help-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.version {
+  margin-top: 16px;
+  font-size: 12px;
+  opacity: 0.4;
+}
+
+.version a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.version a:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 </style>
