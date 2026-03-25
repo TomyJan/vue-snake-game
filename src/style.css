@@ -31,6 +31,18 @@ html, body {
 
 body {
   min-height: 100vh;
+  min-height: 100dvh;
+  overscroll-behavior: none;
+}
+
+/* Mobile: prevent scroll and bounce */
+@supports (-webkit-touch-callout: none) {
+  html, body {
+    height: -webkit-fill-available;
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+  }
 }
 
 #app {
