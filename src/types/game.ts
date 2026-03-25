@@ -15,7 +15,7 @@ export interface GameState {
 }
 
 export type Direction = 'up' | 'down' | 'left' | 'right'
-export type GameStatus = 'idle' | 'playing' | 'paused' | 'gameover'
+export type GameStatus = 'idle' | 'starting' | 'playing' | 'paused' | 'gameover'
 
 export interface GameConfig {
   gridSize: number
