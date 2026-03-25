@@ -160,5 +160,18 @@ watch(() => [props.snake, props.food, props.status], () => {
   border: 2px solid var(--card-border);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
   display: block;
+  max-width: 95vw;
+  max-height: 60vh;
+  width: 480px;
+  height: 480px;
+  object-fit: contain;
+}
+
+@media (max-width: 500px) {
+  .game-canvas {
+    width: calc(100vw - 24px);
+    height: calc(100vw - 24px);
+    max-height: none;
+  }
 }
 </style>
