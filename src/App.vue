@@ -23,11 +23,13 @@
         :status="state.status"
         :sound-enabled="soundEnabled"
         :theme="theme"
+        :ai-enabled="aiEnabled"
         @start="onStart"
         @restart="onRestart"
         @toggle-pause="onTogglePause"
         @toggle-sound="onToggleSound"
         @toggle-theme="onToggleTheme"
+        @toggle-ai="onToggleAI"
       />
 
       <MobileControls @direction="onDirection" />
@@ -35,13 +37,16 @@
       <p class="hint" v-if="state.status === 'idle'">
         Press <kbd>Space</kbd> or <kbd>↑↓←→</kbd> to start
       </p>
+      <p class="hint" v-else-if="state.status === 'starting'">
+        Get ready...
+      </p>
       <p class="hint" v-else-if="state.status === 'playing'">
         <kbd>Space</kbd> pause · <kbd>R</kbd> restart
       </p>
     </main>
 
     <GameOverModal
-      :show="state.status === 'gameover'"
+      :show="showGameOverModal"
       :score="state.score"
       :high-score="state.highScore"
       :length="snakeLength"
@@ -53,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import GameBoard from './components/GameBoard.vue'
 import ScoreBoard from './components/ScoreBoard.vue'
 import GameControls from './components/GameControls.vue'
@@ -71,6 +76,8 @@ const {
   togglePause,
   setDirection,
   handleKeydown,
+  toggleAI,
+  aiEnabled,
   length: snakeLength,
 } = useGame()
 
@@ -81,12 +88,32 @@ const isNewHighScore = computed(() =>
   state.status === 'gameover' && state.score > 0 && state.score >= state.highScore
 )
 
+// Delay modal appearance to prevent flash on quick restart
+const showGameOverModal = ref(false)
+let gameOverTimeout: ReturnType<typeof setTimeout> | null = null
+
+watch(() => state.status, (newStatus, oldStatus) => {
+  if (newStatus === 'gameover' && oldStatus === 'playing') {
+    // Show modal after a short delay
+    gameOverTimeout = setTimeout(() => {
+      showGameOverModal.value = true
+    }, 100)
+  } else if (newStatus !== 'gameover') {
+    showGameOverModal.value = false
+    if (gameOverTimeout) {
+      clearTimeout(gameOverTimeout)
+      gameOverTimeout = null
+    }
+  }
+})
+
 function onStart() {
   playStart()
   startGame()
 }
 
 function onRestart() {
+  showGameOverModal.value = false
   playStart()
   startGame()
 }
@@ -103,15 +130,19 @@ function onToggleTheme() {
   toggleTheme()
 }
 
+function onToggleAI() {
+  toggleAI()
+}
+
 function onDirection(dir: Direction) {
-  if (state.status === 'idle') {
+  if (state.status === 'idle' || state.status === 'starting') {
     playStart()
-    startGame()
+    if (state.status === 'idle') startGame()
   }
   setDirection(dir)
 }
 
-// Watch for eat/hit events
+// Sound events
 let prevLength = 3
 let prevStatus = 'idle'
 
@@ -120,7 +151,6 @@ onMounted(() => {
     appRef.value?.focus()
   })
 
-  // Simple polling for sound events
   setInterval(() => {
     if (state.snake.length > prevLength) {
       playEat()
@@ -135,7 +165,6 @@ onMounted(() => {
   }, 50)
 })
 
-// Global keydown for R to restart
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'r' || e.key === 'R') {
     e.preventDefault()
@@ -147,6 +176,10 @@ function onKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>
 
