@@ -250,7 +250,7 @@ export function useGame() {
     }
   }
 
-  // === AI - Greedy Solver with Tail Safety ===
+  // === AI - Greedy Flood Fill Solver ===
   const DIR_PRIORITY: Direction[] = ['up', 'right', 'down', 'left']
 
   function nextPos(pos: Position, dir: Direction): Position {
@@ -260,11 +260,6 @@ export function useGame() {
 
   function posKey(p: Position): string { return `${p.x},${p.y}` }
 
-  function isFree(p: Position, occupied: Set<string>): boolean {
-    if (p.x < 0 || p.x >= GAME_CONFIG.gridSize || p.y < 0 || p.y >= GAME_CONFIG.gridSize) return false
-    return !occupied.has(posKey(p))
-  }
-
   function buildOccupied(): Set<string> {
     const s = new Set<string>()
     for (let i = 0; i < state.snake.length - 1; i++) s.add(posKey(state.snake[i]))
@@ -272,78 +267,57 @@ export function useGame() {
     return s
   }
 
-  // BFS shortest path, returns array of positions (excluding start)
-  function bfsPath(start: Position, target: Position, occupied: Set<string>): Position[] | null {
+  function isInBounds(p: Position): boolean {
+    return p.x >= 0 && p.x < GAME_CONFIG.gridSize && p.y >= 0 && p.y < GAME_CONFIG.gridSize
+  }
+
+  // BFS shortest path, returns first step direction or null
+  function bfsFirstStep(start: Position, target: Position, occupied: Set<string>): Direction | null {
     const visited = new Set<string>()
-    const queue: { pos: Position; path: Position[] }[] = [{ pos: start, path: [] }]
+    const queue: { pos: Position; firstDir: Direction }[] = []
+    visited.add(posKey(start))
+
+    for (const dir of DIR_PRIORITY) {
+      const n = nextPos(start, dir)
+      const k = posKey(n)
+      if (isInBounds(n) && !occupied.has(k)) {
+        visited.add(k)
+        queue.push({ pos: n, firstDir: dir })
+      }
+    }
+
+    while (queue.length > 0) {
+      const { pos, firstDir } = queue.shift()!
+      if (positionsEqual(pos, target)) return firstDir
+
+      for (const dir of DIR_PRIORITY) {
+        const n = nextPos(pos, dir)
+        const k = posKey(n)
+        if (visited.has(k) || !isInBounds(n) || occupied.has(k)) continue
+        visited.add(k)
+        queue.push({ pos: n, firstDir })
+      }
+    }
+    return null
+  }
+
+  // Flood fill: count reachable cells from start
+  function floodFill(start: Position, occupied: Set<string>): number {
+    const visited = new Set<string>()
+    const queue: Position[] = [start]
     visited.add(posKey(start))
 
     while (queue.length > 0) {
-      const { pos, path } = queue.shift()!
-      if (positionsEqual(pos, target)) return path
-
+      const pos = queue.shift()!
       for (const dir of DIR_PRIORITY) {
         const n = nextPos(pos, dir)
         const k = posKey(n)
-        if (visited.has(k) || !isFree(n, occupied)) continue
+        if (visited.has(k) || !isInBounds(n) || occupied.has(k)) continue
         visited.add(k)
-        queue.push({ pos: n, path: [...path, n] })
+        queue.push(n)
       }
     }
-    return null
-  }
-
-  // BFS find longest path from start to target (heuristic DFS)
-  function bfsLongest(start: Position, target: Position, occupied: Set<string>): Position[] | null {
-    const visited = new Set<string>()
-    let bestPath: Position[] | null = null
-
-    function dfs(pos: Position, path: Position[]) {
-      if (positionsEqual(pos, target)) {
-        if (!bestPath || path.length > bestPath.length) {
-          bestPath = [...path]
-        }
-        return
-      }
-      if (path.length > occupied.size * 0.8) return // cap depth to avoid timeout
-
-      for (const dir of DIR_PRIORITY) {
-        const n = nextPos(pos, dir)
-        const k = posKey(n)
-        if (visited.has(k) || !isFree(n, occupied)) continue
-        visited.add(k)
-        path.push(n)
-        dfs(n, path)
-        path.pop()
-        visited.delete(k)
-      }
-    }
-
-    visited.add(posKey(start))
-    dfs(start, [])
-    return bestPath
-  }
-
-  // Simulate snake after eating along a path
-  function simulateAfterPath(path: Position[]): { head: Position; occupied: Set<string> } | null {
-    if (path.length === 0) return null
-    const newHead = path[path.length - 1]
-    // Snake grows: all old segments + new head are occupied
-    const newOccupied = new Set<string>()
-    for (const seg of state.snake) newOccupied.add(posKey(seg))
-    for (const o of state.obstacles) newOccupied.add(posKey(o))
-    newOccupied.add(posKey(newHead))
-    return { head: newHead, occupied: newOccupied }
-  }
-
-  function dirOf(from: Position, to: Position): Direction | null {
-    const dx = to.x - from.x
-    const dy = to.y - from.y
-    if (dx === 1 && dy === 0) return 'right'
-    if (dx === -1 && dy === 0) return 'left'
-    if (dx === 0 && dy === 1) return 'down'
-    if (dx === 0 && dy === -1) return 'up'
-    return null
+    return visited.size
   }
 
   function findSafeDirection(): Direction {
@@ -352,54 +326,50 @@ export function useGame() {
 
     const occupied = buildOccupied()
     const foodPos = state.food.pos
+    const snakeLen = state.snake.length
 
-    // 1. Try path to food
-    const foodPath = bfsPath(headPos, foodPos, occupied)
-    if (foodPath && foodPath.length > 0) {
-      const sim = simulateAfterPath(foodPath)
-      if (sim) {
-        // After eating, tail stays. Check if we can reach tail via LONGEST path.
-        const tailPos = state.snake[state.snake.length - 1]
-        // Allow BFS to pass through tail position (it's about to become free)
-        sim.occupied.delete(posKey(tailPos))
-        const safeLongest = bfsLongest(sim.head, tailPos, sim.occupied)
-        if (safeLongest && safeLongest.length > 0) {
-          const d = dirOf(headPos, foodPath[0])
-          if (d) return d
-        }
+    // Get valid next moves
+    const validMoves = DIR_PRIORITY
+      .filter(d => {
+        const n = nextPos(headPos, d)
+        return isInBounds(n) && !occupied.has(posKey(n))
+      })
+
+    if (validMoves.length === 0) return state.direction
+
+    // Strategy 1: Go to food if flood fill after eating > snake length (safe margin)
+    const foodDir = bfsFirstStep(headPos, foodPos, occupied)
+    if (foodDir) {
+      const foodNext = nextPos(headPos, foodDir)
+      // Simulate: new head at foodNext, snake grows by 1
+      const newOccupied = new Set(occupied)
+      newOccupied.add(posKey(foodNext))
+      // Snake grows so tail stays - but on NEXT move tail will be removed
+      // So check flood fill without removing tail (conservative)
+      const space = floodFill(foodNext, newOccupied)
+      if (space > snakeLen * 1.5) {
+        return foodDir
       }
     }
 
-    // 2. No safe food path: try to reach own tail via longest path
-    if (state.snake.length > 1) {
-      const tailPos = state.snake[state.snake.length - 1]
-      const tailPath = bfsLongest(headPos, tailPos, occupied)
-      if (tailPath && tailPath.length > 0) {
-        const d = dirOf(headPos, tailPath[0])
-        if (d) return d
-      }
-    }
+    // Strategy 2: Maximize reachable space (stay alive)
+    let bestDir = validMoves[0]
+    let bestSpace = 0
 
-    // 3. Fallback: safest immediate direction
-    let bestDir = state.direction
-    let bestScore = -1
-    for (const dir of DIR_PRIORITY) {
+    for (const dir of validMoves) {
       const n = nextPos(headPos, dir)
-      if (!isFree(n, occupied)) continue
-      // Score: count free neighbors of next position
-      let score = 0
-      for (const d2 of DIR_PRIORITY) {
-        const nn = nextPos(n, d2)
-        if (isFree(nn, occupied)) score++
-      }
-      // Prefer staying away from food when trapped
-      const dist = Math.abs(n.x - foodPos.x) + Math.abs(n.y - foodPos.y)
-      score = score * 100 + dist
-      if (score > bestScore) {
-        bestScore = score
+      // Simulate: move there, tail gets removed
+      const newOccupied = new Set(occupied)
+      const tailPos = state.snake[snakeLen - 1]
+      newOccupied.delete(posKey(tailPos))
+      newOccupied.add(posKey(n))
+      const space = floodFill(n, newOccupied)
+      if (space > bestSpace) {
+        bestSpace = space
         bestDir = dir
       }
     }
+
     return bestDir
   }
 
