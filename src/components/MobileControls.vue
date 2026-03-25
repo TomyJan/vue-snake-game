@@ -1,10 +1,21 @@
 <template>
   <div class="mobile-controls">
-    <div class="dpad">
-      <button class="dpad-btn up" @touchstart.prevent="press('up')" @mousedown.prevent="press('up')">▲</button>
-      <button class="dpad-btn left" @touchstart.prevent="press('left')" @mousedown.prevent="press('left')">◄</button>
-      <button class="dpad-btn right" @touchstart.prevent="press('right')" @mousedown.prevent="press('right')">►</button>
-      <button class="dpad-btn down" @touchstart.prevent="press('down')" @mousedown.prevent="press('down')">▼</button>
+    <div class="joystick">
+      <button class="j-btn up" @touchstart.prevent="press('up')" @mousedown.prevent="press('up')">
+        <span class="arrow">▲</span>
+      </button>
+      <div class="j-middle">
+        <button class="j-btn left" @touchstart.prevent="press('left')" @mousedown.prevent="press('left')">
+          <span class="arrow">◄</span>
+        </button>
+        <div class="j-center"></div>
+        <button class="j-btn right" @touchstart.prevent="press('right')" @mousedown.prevent="press('right')">
+          <span class="arrow">►</span>
+        </button>
+      </div>
+      <button class="j-btn down" @touchstart.prevent="press('down')" @mousedown.prevent="press('down')">
+        <span class="arrow">▼</span>
+      </button>
     </div>
   </div>
 </template>
@@ -26,6 +37,8 @@ function press(dir: Direction) {
   display: none;
   justify-content: center;
   margin-top: 16px;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 @media (max-width: 600px), (pointer: coarse) {
@@ -34,23 +47,36 @@ function press(dir: Direction) {
   }
 }
 
-.dpad {
-  display: grid;
-  grid-template-areas:
-    '. up .'
-    'left . right'
-    '. down .';
+.joystick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 4px;
 }
 
-.dpad-btn {
+.j-middle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.j-center {
   width: 56px;
   height: 56px;
-  border-radius: 12px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 2px solid var(--card-border);
+  opacity: 0.5;
+}
+
+.j-btn {
+  width: 60px;
+  height: 60px;
+  border-radius: 14px;
   border: 2px solid var(--card-border);
   background: var(--card);
   color: var(--text);
-  font-size: 20px;
+  font-size: 22px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -58,16 +84,17 @@ function press(dir: Direction) {
   user-select: none;
   -webkit-user-select: none;
   touch-action: manipulation;
+  transition: all 0.1s;
 }
 
-.dpad-btn:active {
+.j-btn:active {
   background: var(--accent);
   color: #000;
   border-color: var(--accent);
+  transform: scale(0.92);
 }
 
-.dpad-btn.up { grid-area: up; }
-.dpad-btn.down { grid-area: down; }
-.dpad-btn.left { grid-area: left; }
-.dpad-btn.right { grid-area: right; }
+.arrow {
+  pointer-events: none;
+}
 </style>
