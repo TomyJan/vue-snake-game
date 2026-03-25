@@ -109,12 +109,12 @@ export function useGame() {
   function emitParticles(x: number, y: number, color: string, count: number = 8) {
     for (let i = 0; i < count; i++) {
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5
-      const speed = 2 + Math.random() * 3
+      const spd = 2 + Math.random() * 3
       state.particles.push({
         x: x * GAME_CONFIG.cellSize + GAME_CONFIG.cellSize / 2,
         y: y * GAME_CONFIG.cellSize + GAME_CONFIG.cellSize / 2,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
+        vx: Math.cos(angle) * spd,
+        vy: Math.sin(angle) * spd,
         life: 1,
         color,
         size: 3 + Math.random() * 3,
@@ -135,12 +135,10 @@ export function useGame() {
   }
 
   function applySlowBuff() {
-    // Temporary speed reduction
     state.speed = Math.min(baseSpeed.value + 60, 350)
     restartGameTimer()
     if (slowBuffTimer) clearTimeout(slowBuffTimer)
     slowBuffTimer = setTimeout(() => {
-      // Revert to base speed
       state.speed = baseSpeed.value
       if (state.status === 'playing') restartGameTimer()
     }, SLOW_BUFF_DURATION)
@@ -154,30 +152,25 @@ export function useGame() {
       y: head.value.y + delta.y,
     }
 
-    // Wall collision
     if (newHead.x < 0 || newHead.x >= GAME_CONFIG.gridSize || newHead.y < 0 || newHead.y >= GAME_CONFIG.gridSize) {
       gameOver()
       return { hit: true }
     }
 
-    // Self collision
     if (state.snake.some((seg) => positionsEqual(seg, newHead))) {
       gameOver()
       return { hit: true }
     }
 
-    // Obstacle collision
     if (state.obstacles.some((o) => positionsEqual(o, newHead))) {
       gameOver()
       return { hit: true }
     }
 
-    // Check bonus food expiry
     if (state.food.expiresAt && Date.now() > state.food.expiresAt) {
       state.food = spawnFood(GAME_CONFIG.gridSize, state.snake, state.obstacles)
     }
 
-    // Check food
     const ate = positionsEqual(newHead, state.food.pos)
     state.snake.unshift(newHead)
 
@@ -250,204 +243,90 @@ export function useGame() {
     }
   }
 
-  // === AI - Hamiltonian Cycle + Greedy Shortcuts ===
-  const DIRS: Direction[] = ['up', 'right', 'down', 'left']
-  let cycle: Position[] = []       // Hamiltonian cycle cells in order
-  let cycleIdx: Map<string, number> = new Map()
+  // ===== AI =====
+  const AI_DIRS: Direction[] = ['up', 'right', 'down', 'left']
+  const G = GAME_CONFIG.gridSize
 
-  function pk(p: Position): string { return `${p.x},${p.y}` }
+  function key(x: number, y: number): string { return `${x},${y}` }
+  function inB(x: number, y: number): boolean { return x >= 0 && x < G && y >= 0 && y < G }
 
-  function move(pos: Position, dir: Direction): Position {
-    const d = DIRECTION_MAP[dir]
-    return { x: pos.x + d.x, y: pos.y + d.y }
-  }
-
-  function inBounds(p: Position): boolean {
-    return p.x >= 0 && p.x < GAME_CONFIG.gridSize && p.y >= 0 && p.y < GAME_CONFIG.gridSize
-  }
-
-  function dirBetween(a: Position, b: Position): Direction | null {
-    if (b.x === a.x + 1 && b.y === a.y) return 'right'
-    if (b.x === a.x - 1 && b.y === a.y) return 'left'
-    if (b.x === a.x && b.y === a.y + 1) return 'down'
-    if (b.x === a.x && b.y === a.y - 1) return 'up'
-    return null
-  }
-
-  // Build zigzag Hamiltonian cycle
-  function buildCycle() {
-    const n = GAME_CONFIG.gridSize
-    const c: Position[] = []
-    for (let y = 0; y < n; y++) {
-      if (y % 2 === 0) { for (let x = 0; x < n; x++) c.push({ x, y }) }
-      else { for (let x = n - 1; x >= 0; x--) c.push({ x, y }) }
-    }
-    cycle = c
-    cycleIdx = new Map()
-    for (let i = 0; i < c.length; i++) cycleIdx.set(pk(c[i]), i)
-  }
-
-  // Occupied set: all body segments + obstacles
-  function occupied(): Set<string> {
-    const s = new Set<string>()
-    for (const seg of state.snake) s.add(pk(seg))
-    for (const o of state.obstacles) s.add(pk(o))
-    return s
-  }
-
-  // BFS: returns first-step direction to target, or null
-  function bfs(start: Position, target: Position, occ: Set<string>): Direction | null {
+  function floodCount(sx: number, sy: number, blocked: Set<string>): number {
     const vis = new Set<string>()
-    const q: { p: Position; d: Direction }[] = []
-    vis.add(pk(start))
-    for (const dir of DIRS) {
-      const n = move(start, dir)
-      if (inBounds(n) && !occ.has(pk(n))) {
-        vis.add(pk(n))
-        if (n.x === target.x && n.y === target.y) return dir
-        q.push({ p: n, d: dir })
-      }
-    }
-    while (q.length > 0) {
-      const { p, d } = q.shift()!
-      for (const dir of DIRS) {
-        const n = move(p, dir)
-        const k = pk(n)
-        if (!inBounds(n) || occ.has(k) || vis.has(k)) continue
+    const qx: number[] = [sx]
+    const qy: number[] = [sy]
+    vis.add(key(sx, sy))
+    let head2 = 0
+    while (head2 < qx.length) {
+      const cx = qx[head2], cy = qy[head2]; head2++
+      for (const d of AI_DIRS) {
+        const dd = DIRECTION_MAP[d]
+        const nx = cx + dd.x, ny = cy + dd.y
+        const k = key(nx, ny)
+        if (!inB(nx, ny) || blocked.has(k) || vis.has(k)) continue
         vis.add(k)
-        if (n.x === target.x && n.y === target.y) return d
-        q.push({ p: n, d })
+        qx.push(nx)
+        qy.push(ny)
       }
     }
-    return null
-  }
-
-  // Heuristic longest path: extend shortest path by detouring
-  function longestPathLen(start: Position, target: Position, occ: Set<string>): number {
-    // BFS shortest path
-    const vis = new Set<string>()
-    const q: { p: Position; len: number }[] = [{ p: start, len: 0 }]
-    vis.add(pk(start))
-    let bestLen = 0
-    while (q.length > 0) {
-      const { p, len } = q.shift()!
-      if (p.x === target.x && p.y === target.y) { bestLen = len; break }
-      for (const dir of DIRS) {
-        const n = move(p, dir)
-        const k = pk(n)
-        if (!inBounds(n) || occ.has(k) || vis.has(k)) continue
-        vis.add(k)
-        q.push({ p: n, len: len + 1 })
-      }
-    }
-    return bestLen
-  }
-
-  // Simulate snake moving along a BFS path step by step
-  function simMove(start: Position, target: Position, occ: Set<string>): { snake: Position[]; reached: boolean } {
-    // BFS to find full path
-    const vis = new Map<string, { p: Position; dir: Direction }>()
-    const q: Position[] = [start]
-    vis.set(pk(start), { p: start, dir: 'right' })
-    let found = false
-    while (q.length > 0 && !found) {
-      const p = q.shift()!
-      for (const dir of DIRS) {
-        const n = move(p, dir)
-        const k = pk(n)
-        if (!inBounds(n) || occ.has(k) || vis.has(k)) continue
-        vis.set(k, { p, dir })
-        if (n.x === target.x && n.y === target.y) { found = true; break }
-        q.push(n)
-      }
-    }
-    if (!found) return { snake: [], reached: false }
-
-    // Reconstruct path
-    const path: Position[] = []
-    let cur = target
-    while (cur.x !== start.x || cur.y !== start.y) {
-      path.unshift(cur)
-      const prev = vis.get(pk(cur))
-      if (!prev) break
-      cur = prev.p
-    }
-
-    // Simulate: move snake along path
-    const simSnake = [...state.snake]
-    for (const step of path) {
-      simSnake.unshift(step)  // add new head
-      simSnake.pop()           // remove tail (not eating yet)
-    }
-    // Last step: snake reaches food, grows (tail stays)
-    // simSnake already has the new head + all old body (pop removed last tail)
-    // But we need to NOT pop on the last step (eating)
-    // Re-do: pop only path.length - 1 times
-    const simSnake2 = [...state.snake]
-    for (let i = 0; i < path.length; i++) {
-      simSnake2.unshift(path[i])
-      if (i < path.length - 1) simSnake2.pop() // don't pop on last step (eating)
-    }
-    return { snake: simSnake2, reached: true }
+    return vis.size
   }
 
   function findSafeDirection(): Direction {
-    const headPos = head.value
-    if (!headPos) return 'right'
-    if (cycle.length === 0) buildCycle()
+    const hp = head.value
+    if (!hp) return 'right'
 
-    const occ = occupied()
-    const foodPos = state.food.pos
-    const snakeLen = state.snake.length
+    // Build blocked set: body (all except tail) + obstacles
+    const blocked = new Set<string>()
+    for (let i = 0; i < state.snake.length - 1; i++) {
+      blocked.add(key(state.snake[i].x, state.snake[i].y))
+    }
+    for (const o of state.obstacles) blocked.add(key(o.x, o.y))
 
-    // Strategy 1: BFS shortcut to food
-    const foodDir = bfs(headPos, foodPos, occ)
-    if (foodDir) {
-      // Simulate: snake moves along path to food, grows at end
-      const sim = simMove(headPos, foodPos, occ)
-      if (sim.reached) {
-        // Build occupied from simulated snake
-        const simOcc = new Set<string>()
-        for (const seg of sim.snake) simOcc.add(pk(seg))
-        for (const o of state.obstacles) simOcc.add(pk(o))
-        // Check: can head reach any point ahead on the cycle?
-        // Use longest path heuristic: if head can find a path longer than snake, it's safe
-        const simHead = sim.snake[0]
-        const simTail = sim.snake[sim.snake.length - 1]
-        const pathLen = longestPathLen(simHead, simTail, simOcc)
-        if (pathLen >= snakeLen) {
-          return foodDir
-        }
+    const hx = hp.x, hy = hp.y
+    const fx = state.food.pos.x, fy = state.food.pos.y
+    const tail = state.snake[state.snake.length - 1]
+
+    let bestDir: Direction = state.direction
+    let bestScore = -Infinity
+
+    for (const d of AI_DIRS) {
+      const dd = DIRECTION_MAP[d]
+      const nx = hx + dd.x, ny = hy + dd.y
+
+      // Skip if out of bounds or blocked
+      if (!inB(nx, ny) || blocked.has(key(nx, ny))) continue
+
+      // Skip reverse direction
+      if (state.snake.length > 1 && nx === state.snake[1].x && ny === state.snake[1].y) continue
+
+      let score: number
+
+      if (nx === fx && ny === fy) {
+        // Eating food: snake grows, tail stays → blocked includes tail
+        const afterEat = new Set(blocked)
+        afterEat.add(key(nx, ny))
+        const space = floodCount(nx, ny, afterEat)
+        // Only eat if we have enough room
+        score = space > state.snake.length + 3 ? space * 100 + 5000 : -10000
+      } else {
+        // Normal move: tail gets freed
+        const afterMove = new Set(blocked)
+        afterMove.delete(key(tail.x, tail.y))
+        afterMove.add(key(nx, ny))
+        const space = floodCount(nx, ny, afterMove)
+        // Prefer more space, prefer closer to food
+        const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
+        score = space * 100 - dist
+      }
+
+      if (score > bestScore) {
+        bestScore = score
+        bestDir = d
       }
     }
 
-    // Strategy 2: Follow Hamiltonian cycle
-    const hIdx = cycleIdx.get(pk(headPos))
-    if (hIdx !== undefined) {
-      const nextCell = cycle[(hIdx + 1) % cycle.length]
-      if (!occ.has(pk(nextCell)) && inBounds(nextCell)) {
-        const d = dirBetween(headPos, nextCell)
-        if (d) return d
-      }
-      // Cycle blocked: BFS to next reachable cycle cell
-      for (let off = 1; off < cycle.length; off++) {
-        const target = cycle[(hIdx + off) % cycle.length]
-        if (!occ.has(pk(target)) && inBounds(target)) {
-          const d = bfs(headPos, target, occ)
-          if (d) return d
-        }
-      }
-    }
-
-    // Strategy 3: Any safe direction
-    for (const dir of DIRS) {
-      const n = move(headPos, dir)
-      if (inBounds(n) && !occ.has(pk(n))) return dir
-    }
-    return 'right'
+    return bestDir
   }
-
-  buildCycle()
 
   function aiTick() {
     if (state.status !== 'playing') return
