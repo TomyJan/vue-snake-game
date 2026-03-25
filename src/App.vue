@@ -97,6 +97,7 @@ const appRef = ref<HTMLElement | null>(null)
 const {
   state,
   startGame,
+  endGame,
   togglePause,
   setDirection,
   handleKeydown,
@@ -155,14 +156,13 @@ function onRestart() {
 }
 
 function onEndGame() {
-  // Force game over from pause/playing
   showGameOverModal.value = false
-  state.status = 'idle'
+  endGame()
 }
 
 function onQuit() {
   showGameOverModal.value = false
-  state.status = 'idle'
+  endGame()
 }
 
 function onTogglePause() { togglePause() }
