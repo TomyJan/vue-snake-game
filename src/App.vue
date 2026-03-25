@@ -45,6 +45,20 @@
       </p>
     </main>
 
+    <footer class="controls-help">
+      <details>
+        <summary>⌨️ Controls</summary>
+        <div class="help-grid">
+          <div class="help-item"><kbd>↑↓←→</kbd> <kbd>WASD</kbd> Move</div>
+          <div class="help-item"><kbd>Space</kbd> Start / Pause</div>
+          <div class="help-item"><kbd>R</kbd> Restart</div>
+          <div class="help-item"><kbd>Esc</kbd> Pause</div>
+          <div class="help-item">🤖 Toggle AI auto-play</div>
+          <div class="help-item">📱 Touch D-pad on mobile</div>
+        </div>
+      </details>
+    </footer>
+
     <GameOverModal
       :show="showGameOverModal"
       :score="state.score"
@@ -232,5 +246,52 @@ kbd {
   padding: 2px 6px;
   font-size: 12px;
   font-family: 'Courier New', monospace;
+}
+
+.controls-help {
+  margin-top: 24px;
+  width: 100%;
+  max-width: 500px;
+}
+
+.controls-help details {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+
+.controls-help summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text);
+  opacity: 0.7;
+  user-select: none;
+}
+
+.controls-help summary:hover {
+  opacity: 1;
+}
+
+.help-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.help-item {
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0.8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 400px) {
+  .help-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
