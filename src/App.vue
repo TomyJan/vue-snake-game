@@ -18,6 +18,9 @@
           :obstacles="state.obstacles"
           :particles="state.particles"
           :status="state.status"
+          :score="state.score"
+          :high-score="state.highScore"
+          :is-new-high-score="isNewHighScore"
         />
       </div>
 
@@ -67,17 +70,6 @@
     <div class="version">
       <a :href="commitUrl" target="_blank" rel="noopener">v{{ version }}+{{ commitShort }}</a>
     </div>
-
-    <GameOverModal
-      :show="showGameOverModal"
-      :score="state.score"
-      :high-score="state.highScore"
-      :length="snakeLength"
-      :is-new-high-score="isNewHighScore"
-      @close="onRestart"
-      @restart="onRestart"
-      @quit="onQuit"
-    />
   </div>
 </template>
 
@@ -86,7 +78,6 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import GameBoard from './components/GameBoard.vue'
 import ScoreBoard from './components/ScoreBoard.vue'
 import GameControls from './components/GameControls.vue'
-import GameOverModal from './components/GameOverModal.vue'
 import MobileControls from './components/MobileControls.vue'
 import { useGame } from './composables/useGame'
 import { useTheme } from './composables/useTheme'
@@ -120,50 +111,28 @@ const isNewHighScore = computed(() =>
   state.status === 'gameover' && state.score > 0 && state.score >= state.highScore
 )
 
-const showGameOverModal = ref(false)
-let gameOverTimeout: ReturnType<typeof setTimeout> | null = null
-
-watch(() => state.status, (newStatus, oldStatus) => {
-  // Lock body scroll during active gameplay
-  if (newStatus === 'playing' || newStatus === 'starting') {
-    document.body.classList.add('game-active')
-  } else {
-    document.body.classList.remove('game-active')
-  }
-
-  if (newStatus === 'gameover' && oldStatus === 'playing') {
-    gameOverTimeout = setTimeout(() => {
-      showGameOverModal.value = true
-    }, 100)
-  } else if (newStatus !== 'gameover') {
-    showGameOverModal.value = false
-    if (gameOverTimeout) {
-      clearTimeout(gameOverTimeout)
-      gameOverTimeout = null
-    }
-  }
-})
-
 function onStart() {
   playStart()
   startGame()
 }
 
 function onRestart() {
-  showGameOverModal.value = false
   playStart()
   startGame()
 }
 
 function onEndGame() {
-  showGameOverModal.value = false
   endGame()
 }
 
-function onQuit() {
-  showGameOverModal.value = false
-  endGame()
-}
+// Lock body scroll during active gameplay
+watch(() => state.status, (s) => {
+  if (s === 'playing' || s === 'starting') {
+    document.body.classList.add('game-active')
+  } else {
+    document.body.classList.remove('game-active')
+  }
+})
 
 function onTogglePause() { togglePause() }
 function onToggleSound() { toggleSound() }

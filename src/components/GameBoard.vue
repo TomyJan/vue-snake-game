@@ -19,6 +19,9 @@ const props = defineProps<{
   obstacles: Position[]
   particles: Particle[]
   status: string
+  score?: number
+  highScore?: number
+  isNewHighScore?: boolean
 }>()
 
 const { theme } = useTheme()
@@ -172,14 +175,20 @@ function draw() {
   }
   ctx.globalAlpha = 1
 
-  // Overlays
-  if (props.status === 'paused') drawOverlay(ctx, '⏸ PAUSED', 'Press Space to resume')
-  else if (props.status === 'starting') drawOverlay(ctx, '🐍 GET READY!', 'Use arrow keys or WASD to move')
-  else if (props.status === 'idle') drawOverlay(ctx, '🐍 SNAKE', 'Press Space to start')
+  // Overlays - semi-transparent, game state still visible underneath
+  if (props.status === 'paused') {
+    drawOverlay(ctx, '⏸ PAUSED', 'Press Space to resume')
+  } else if (props.status === 'starting') {
+    drawOverlay(ctx, '🐍 GET READY!', 'Use arrow keys or WASD to move')
+  } else if (props.status === 'idle') {
+    drawOverlay(ctx, '🐍 SNAKE', 'Press Space to start')
+  } else if (props.status === 'gameover') {
+    drawGameOver(ctx)
+  }
 }
 
 function drawOverlay(ctx: CanvasRenderingContext2D, title: string, subtitle?: string) {
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.65)'
   ctx.fillRect(0, 0, canvasSize.value, canvasSize.value)
   ctx.fillStyle = '#ffffff'
   ctx.font = 'bold 24px sans-serif'
@@ -191,6 +200,44 @@ function drawOverlay(ctx: CanvasRenderingContext2D, title: string, subtitle?: st
     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
     ctx.fillText(subtitle, canvasSize.value / 2, canvasSize.value / 2 + 18)
   }
+}
+
+function drawGameOver(ctx: CanvasRenderingContext2D) {
+  const c = getColors()
+  const w = canvasSize.value
+  const cx = w / 2
+
+  // Semi-transparent overlay
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)'
+  ctx.fillRect(0, 0, w, w)
+
+  // Title
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 28px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('💀 Game Over', cx, cx - 50)
+
+  // Score
+  ctx.font = '16px sans-serif'
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
+  ctx.fillText('SCORE', cx, cx - 16)
+  ctx.font = 'bold 36px "Courier New", monospace'
+  ctx.fillStyle = c.accent
+  ctx.fillText(String(props.score ?? 0), cx, cx + 22)
+
+  // New high score
+  if (props.isNewHighScore) {
+    ctx.font = 'bold 16px sans-serif'
+    ctx.fillStyle = c.accent
+    ctx.fillText('🎉 New High Score!', cx, cx + 52)
+  }
+
+  // Length & best
+  ctx.font = '13px sans-serif'
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'
+  const best = props.highScore ?? 0
+  ctx.fillText(`Best: ${best}`, cx, cx + 78)
 }
 
 let animFrame = 0
