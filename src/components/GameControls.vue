@@ -16,24 +16,18 @@
         ⏳ Starting...
       </button>
       <template v-if="status === 'playing' || status === 'paused'">
-        <button
-          class="btn"
-          @click="$emit('toggle-pause')"
-        >
+        <button class="btn" @click="$emit('toggle-pause')">
           {{ status === 'playing' ? '⏸ Pause' : '▶ Resume' }}
         </button>
-        <button
-          class="btn btn-danger"
-          @click="$emit('restart')"
-        >
+        <button class="btn btn-danger" @click="$emit('restart')">
           ↻ Restart
+        </button>
+        <button class="btn" @click="$emit('end-game')">
+          ✕ End
         </button>
       </template>
       <template v-if="status === 'gameover'">
-        <button
-          class="btn btn-primary"
-          @click="$emit('restart')"
-        >
+        <button class="btn btn-primary" @click="$emit('restart')">
           ↻ Play Again
         </button>
       </template>
@@ -89,6 +83,7 @@ defineProps<{
 defineEmits<{
   start: []
   restart: []
+  'end-game': []
   'toggle-pause': []
   'toggle-sound': []
   'toggle-theme': []
@@ -110,11 +105,13 @@ const speedLevels = SPEED_LEVELS
 
 .main-controls {
   display: flex;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .btn {
-  padding: 10px 20px;
+  padding: 10px 18px;
   border: 1px solid var(--card-border);
   border-radius: 8px;
   background: var(--card);
@@ -122,6 +119,7 @@ const speedLevels = SPEED_LEVELS
   font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
+  white-space: nowrap;
 }
 
 .btn:hover:not(:disabled) {
