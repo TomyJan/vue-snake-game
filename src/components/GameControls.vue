@@ -1,42 +1,53 @@
 <template>
   <div class="game-controls">
-    <button
-      v-if="status === 'idle'"
-      class="btn btn-primary"
-      @click="$emit('start')"
-    >
-      ▶ Start Game
-    </button>
-    <button
-      v-if="status === 'starting'"
-      class="btn"
-      disabled
-    >
-      ⏳ Starting...
-    </button>
-    <template v-if="status === 'playing' || status === 'paused'">
+    <div class="main-controls">
       <button
-        class="btn"
-        @click="$emit('toggle-pause')"
-      >
-        {{ status === 'playing' ? '⏸ Pause' : '▶ Resume' }}
-      </button>
-      <button
-        class="btn btn-danger"
-        @click="$emit('restart')"
-      >
-        ↻ Restart
-      </button>
-    </template>
-    <template v-if="status === 'gameover'">
-      <button
+        v-if="status === 'idle'"
         class="btn btn-primary"
-        @click="$emit('restart')"
+        @click="$emit('start')"
       >
-        ↻ Play Again
+        ▶ Start Game
       </button>
-    </template>
+      <button
+        v-if="status === 'starting'"
+        class="btn"
+        disabled
+      >
+        ⏳ Starting...
+      </button>
+      <template v-if="status === 'playing' || status === 'paused'">
+        <button
+          class="btn"
+          @click="$emit('toggle-pause')"
+        >
+          {{ status === 'playing' ? '⏸ Pause' : '▶ Resume' }}
+        </button>
+        <button
+          class="btn btn-danger"
+          @click="$emit('restart')"
+        >
+          ↻ Restart
+        </button>
+      </template>
+      <template v-if="status === 'gameover'">
+        <button
+          class="btn btn-primary"
+          @click="$emit('restart')"
+        >
+          ↻ Play Again
+        </button>
+      </template>
+    </div>
+
     <div class="side-controls">
+      <div class="speed-selector" v-if="status === 'idle'">
+        <label>Speed:</label>
+        <select @change="$emit('set-speed', Number(($event.target as HTMLSelectElement).value))">
+          <option v-for="s in speedLevels" :key="s.speed" :value="s.speed" :selected="s.speed === currentSpeed">
+            {{ s.label }}
+          </option>
+        </select>
+      </div>
       <button
         class="btn"
         :class="{ 'btn-active': aiEnabled }"
@@ -65,12 +76,14 @@
 
 <script setup lang="ts">
 import type { GameStatus, Theme } from '../types/game'
+import { SPEED_LEVELS } from '../utils/constants'
 
 defineProps<{
   status: GameStatus
   soundEnabled: boolean
   theme: Theme
   aiEnabled: boolean
+  currentSpeed: number
 }>()
 
 defineEmits<{
@@ -80,16 +93,24 @@ defineEmits<{
   'toggle-sound': []
   'toggle-theme': []
   'toggle-ai': []
+  'set-speed': [speed: number]
 }>()
+
+const speedLevels = SPEED_LEVELS
 </script>
 
 <style scoped>
 .game-controls {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   justify-content: center;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.main-controls {
+  display: flex;
+  gap: 10px;
 }
 
 .btn {
@@ -149,5 +170,28 @@ defineEmits<{
 .side-controls {
   display: flex;
   gap: 6px;
+  align-items: center;
+}
+
+.speed-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.speed-selector label {
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0.7;
+}
+
+.speed-selector select {
+  padding: 8px 12px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
 }
 </style>
