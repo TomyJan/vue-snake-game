@@ -27,6 +27,7 @@
         :current-speed="baseSpeed"
         @start="onStart"
         @restart="onRestart"
+        @end-game="onEndGame"
         @toggle-pause="onTogglePause"
         @toggle-sound="onToggleSound"
         @toggle-theme="onToggleTheme"
@@ -43,7 +44,7 @@
         Get ready...
       </p>
       <p class="hint" v-else-if="state.status === 'playing'">
-        <kbd>Space</kbd> pause · <kbd>R</kbd> restart
+        <kbd>Space</kbd> pause · <kbd>R</kbd> restart · <kbd>Q</kbd> quit
       </p>
     </main>
 
@@ -54,9 +55,9 @@
           <div class="help-item"><kbd>↑↓←→</kbd> <kbd>WASD</kbd> Move</div>
           <div class="help-item"><kbd>Space</kbd> Start / Pause</div>
           <div class="help-item"><kbd>R</kbd> Restart</div>
+          <div class="help-item"><kbd>Q</kbd> Quit to menu</div>
           <div class="help-item"><kbd>Esc</kbd> Pause</div>
           <div class="help-item">🤖 Toggle AI auto-play</div>
-          <div class="help-item">📱 Touch D-pad on mobile</div>
         </div>
       </details>
     </footer>
@@ -73,6 +74,7 @@
       :is-new-high-score="isNewHighScore"
       @close="onRestart"
       @restart="onRestart"
+      @quit="onQuit"
     />
   </div>
 </template>
@@ -142,6 +144,17 @@ function onRestart() {
   startGame()
 }
 
+function onEndGame() {
+  // Force game over from pause/playing
+  showGameOverModal.value = false
+  state.status = 'idle'
+}
+
+function onQuit() {
+  showGameOverModal.value = false
+  state.status = 'idle'
+}
+
 function onTogglePause() { togglePause() }
 function onToggleSound() { toggleSound() }
 function onToggleTheme() { toggleTheme() }
@@ -183,6 +196,11 @@ function onKeydown(e: KeyboardEvent) {
     onRestart()
     return
   }
+  if (e.key === 'q' || e.key === 'Q') {
+    e.preventDefault()
+    onEndGame()
+    return
+  }
   handleKeydown(e)
 }
 
@@ -198,6 +216,7 @@ onUnmounted(() => {
 <style scoped>
 .app {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -205,10 +224,11 @@ onUnmounted(() => {
   background: var(--bg);
   color: var(--text);
   outline: none;
+  overflow-x: hidden;
 }
 
 .header {
-  margin-bottom: 20px;
+  margin-bottom: 8px;
 }
 
 .title {
@@ -222,12 +242,12 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
   max-width: 100%;
 }
 
 .board-wrapper {
-  margin: 8px 0;
+  margin: 4px 0;
 }
 
 .hint {
@@ -247,7 +267,7 @@ kbd {
 }
 
 .controls-help {
-  margin-top: 24px;
+  margin-top: 20px;
   width: 100%;
   max-width: 500px;
 }
@@ -294,7 +314,7 @@ kbd {
 }
 
 .version {
-  margin-top: 16px;
+  margin-top: 12px;
   font-size: 12px;
   opacity: 0.4;
 }
@@ -307,5 +327,28 @@ kbd {
 .version a:hover {
   color: var(--accent);
   text-decoration: underline;
+}
+
+/* Mobile: fullscreen, no scroll */
+@media (max-width: 600px) {
+  .app {
+    padding: 12px 8px 20px;
+  }
+
+  .header {
+    margin-bottom: 4px;
+  }
+
+  .title {
+    font-size: 24px;
+  }
+
+  .controls-help {
+    display: none;
+  }
+
+  .version {
+    margin-top: 8px;
+  }
 }
 </style>
