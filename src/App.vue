@@ -63,7 +63,7 @@
     </footer>
 
     <div class="version">
-      <a :href="commitUrl" target="_blank" rel="noopener">v{{ version }}</a>
+      <a :href="commitUrl" target="_blank" rel="noopener">v{{ version }}+{{ commitShort }}</a>
     </div>
 
     <GameOverModal
@@ -110,6 +110,7 @@ const { enabled: soundEnabled, toggleSound, playStart, playEat, playHit } = useS
 
 // Version info
 const version = __APP_VERSION__
+const commitShort = __APP_COMMIT__
 const commitUrl = `https://github.com/TomyJan/vue-snake-game/commit/${__APP_COMMIT__}`
 
 const isNewHighScore = computed(() =>
@@ -215,16 +216,17 @@ onUnmounted(() => {
 
 <style scoped>
 .app {
-  min-height: 100vh;
-  min-height: 100dvh;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 24px 16px 40px;
+  padding: 24px 16px 20px;
   background: var(--bg);
   color: var(--text);
   outline: none;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 .header {
