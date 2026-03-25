@@ -1,10 +1,5 @@
 <template>
-  <canvas
-    ref="canvasRef"
-    :width="canvasSize"
-    :height="canvasSize"
-    class="game-canvas"
-  />
+  <canvas ref="canvasRef" :width="canvasSize" :height="canvasSize" class="game-canvas" />
 </template>
 
 <script setup lang="ts">
@@ -241,10 +236,17 @@ function drawGameOver(ctx: CanvasRenderingContext2D) {
 }
 
 let animFrame = 0
-function animate() { draw(); animFrame = requestAnimationFrame(animate) }
+function animate() {
+  draw()
+  animFrame = requestAnimationFrame(animate)
+}
 onMounted(() => animate())
 onUnmounted(() => cancelAnimationFrame(animFrame))
-watch(() => [props.snake, props.food, props.obstacles, props.particles, props.status], () => draw(), { deep: true })
+watch(
+  () => [props.snake, props.food, props.obstacles, props.particles, props.status],
+  () => draw(),
+  { deep: true },
+)
 </script>
 
 <style scoped>

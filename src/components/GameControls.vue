@@ -1,35 +1,19 @@
 <template>
   <div class="game-controls">
     <div class="main-controls">
-      <button
-        v-if="status === 'idle'"
-        class="btn btn-primary"
-        @click="$emit('start')"
-      >
+      <button v-if="status === 'idle'" class="btn btn-primary" @click="$emit('start')">
         ▶ Start Game
       </button>
-      <button
-        v-if="status === 'starting'"
-        class="btn"
-        disabled
-      >
-        ⏳ Starting...
-      </button>
+      <button v-if="status === 'starting'" class="btn" disabled>⏳ Starting...</button>
       <template v-if="status === 'playing' || status === 'paused'">
         <button class="btn" @click="$emit('toggle-pause')">
           {{ status === 'playing' ? '⏸ Pause' : '▶ Resume' }}
         </button>
-        <button class="btn btn-danger" @click="$emit('restart')">
-          ↻ Restart
-        </button>
-        <button class="btn" @click="$emit('end-game')">
-          ✕ End
-        </button>
+        <button class="btn btn-danger" @click="$emit('restart')">↻ Restart</button>
+        <button class="btn" @click="$emit('end-game')">✕ End</button>
       </template>
       <template v-if="status === 'gameover'">
-        <button class="btn btn-primary" @click="$emit('restart')">
-          ↻ Play Again
-        </button>
+        <button class="btn btn-primary" @click="$emit('restart')">↻ Play Again</button>
       </template>
     </div>
 
@@ -37,7 +21,12 @@
       <div class="speed-selector" v-if="status === 'idle'">
         <label>Speed:</label>
         <select @change="$emit('set-speed', Number(($event.target as HTMLSelectElement).value))">
-          <option v-for="s in speedLevels" :key="s.speed" :value="s.speed" :selected="s.speed === currentSpeed">
+          <option
+            v-for="s in speedLevels"
+            :key="s.speed"
+            :value="s.speed"
+            :selected="s.speed === currentSpeed"
+          >
             {{ s.label }}
           </option>
         </select>

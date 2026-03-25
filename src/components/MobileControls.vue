@@ -6,10 +6,7 @@
     @touchend="onRelease"
     @touchcancel="onRelease"
   >
-    <div
-      class="joystick-base"
-      :style="{ left: originX + 'px', top: originY + 'px' }"
-    >
+    <div class="joystick-base" :style="{ left: originX + 'px', top: originY + 'px' }">
       <div
         class="joystick-thumb"
         :style="{ transform: `translate(${thumbX}px, ${thumbY}px)` }"
@@ -21,6 +18,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import type { Direction } from '../types/game'
+
+const props = defineProps<{
+  gameStatus: string
+}>()
 
 const emit = defineEmits<{
   direction: [dir: Direction]
@@ -37,9 +38,12 @@ const DEAD_ZONE = 10
 let currentTouchId: number | null = null
 
 function onTouchStart(e: TouchEvent) {
+  // Only activate during gameplay
+  if (props.gameStatus !== 'playing') return
+
   // Ignore if touching buttons/controls
   const target = e.target as HTMLElement
-  if (target.closest('button, select, a, details, .game-controls')) return
+  if (target.closest('button, select, a, details, .game-controls, .controls-help, .version')) return
 
   const touch = e.changedTouches[0]
   currentTouchId = touch.identifier
@@ -52,13 +56,12 @@ function onTouchStart(e: TouchEvent) {
 
 function onTouchMove(e: TouchEvent) {
   if (!active.value) return
-  const touch = Array.from(e.changedTouches).find(t => t.identifier === currentTouchId)
+  const touch = Array.from(e.changedTouches).find((t) => t.identifier === currentTouchId)
   if (!touch) return
 
   let dx = touch.clientX - originX.value
   let dy = touch.clientY - originY.value
 
-  // Clamp to max radius
   const dist = Math.sqrt(dx * dx + dy * dy)
   if (dist > MAX_RADIUS) {
     dx = (dx / dist) * MAX_RADIUS
@@ -68,7 +71,6 @@ function onTouchMove(e: TouchEvent) {
   thumbX.value = dx
   thumbY.value = dy
 
-  // Determine direction if past dead zone
   if (dist > DEAD_ZONE) {
     if (Math.abs(dx) > Math.abs(dy)) {
       emit('direction', dx > 0 ? 'right' : 'left')

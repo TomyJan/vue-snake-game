@@ -1,6 +1,12 @@
 import { ref, reactive, computed, onUnmounted } from 'vue'
 import type { GameState, Direction, Position, Food } from '../types/game'
-import { GAME_CONFIG, DIRECTION_MAP, OPPOSITE_DIRECTION, KEY_DIRECTION_MAP, OBSTACLE_COUNT } from '../utils/constants'
+import {
+  GAME_CONFIG,
+  DIRECTION_MAP,
+  OPPOSITE_DIRECTION,
+  KEY_DIRECTION_MAP,
+  OBSTACLE_COUNT,
+} from '../utils/constants'
 import { positionsEqual, spawnFood, generateObstacles } from '../utils/helpers'
 
 const HIGH_SCORE_KEY = 'snake-high-score'
@@ -50,7 +56,12 @@ export function useGame() {
   function startGame() {
     clearTimers()
     state.snake = initSnake()
-    state.obstacles = generateObstacles(GAME_CONFIG.gridSize, state.snake, { x: 0, y: 0 }, OBSTACLE_COUNT)
+    state.obstacles = generateObstacles(
+      GAME_CONFIG.gridSize,
+      state.snake,
+      { x: 0, y: 0 },
+      OBSTACLE_COUNT,
+    )
     state.food = spawnFood(GAME_CONFIG.gridSize, state.snake, state.obstacles)
     state.direction = 'right'
     state.nextDirection = 'right'
@@ -154,7 +165,12 @@ export function useGame() {
       y: head.value.y + delta.y,
     }
 
-    if (newHead.x < 0 || newHead.x >= GAME_CONFIG.gridSize || newHead.y < 0 || newHead.y >= GAME_CONFIG.gridSize) {
+    if (
+      newHead.x < 0 ||
+      newHead.x >= GAME_CONFIG.gridSize ||
+      newHead.y < 0 ||
+      newHead.y >= GAME_CONFIG.gridSize
+    ) {
       gameOver()
       return { hit: true }
     }
@@ -205,11 +221,16 @@ export function useGame() {
 
   function startGameTimer() {
     stopGameTimer()
-    gameTimer = setInterval(() => { moveSnake() }, state.speed)
+    gameTimer = setInterval(() => {
+      moveSnake()
+    }, state.speed)
   }
 
   function stopGameTimer() {
-    if (gameTimer) { clearInterval(gameTimer); gameTimer = null }
+    if (gameTimer) {
+      clearInterval(gameTimer)
+      gameTimer = null
+    }
   }
 
   function restartGameTimer() {
@@ -222,14 +243,23 @@ export function useGame() {
   }
 
   function stopParticleTimer() {
-    if (particleTimer) { clearInterval(particleTimer); particleTimer = null }
+    if (particleTimer) {
+      clearInterval(particleTimer)
+      particleTimer = null
+    }
   }
 
   function clearTimers() {
     stopGameTimer()
     stopParticleTimer()
-    if (startDelayTimer) { clearTimeout(startDelayTimer); startDelayTimer = null }
-    if (slowBuffTimer) { clearTimeout(slowBuffTimer); slowBuffTimer = null }
+    if (startDelayTimer) {
+      clearTimeout(startDelayTimer)
+      startDelayTimer = null
+    }
+    if (slowBuffTimer) {
+      clearTimeout(slowBuffTimer)
+      slowBuffTimer = null
+    }
   }
 
   function setDirection(dir: Direction) {
@@ -240,7 +270,10 @@ export function useGame() {
 
   function handleKeydown(e: KeyboardEvent) {
     const dir = KEY_DIRECTION_MAP[e.key]
-    if (dir) { e.preventDefault(); setDirection(dir) }
+    if (dir) {
+      e.preventDefault()
+      setDirection(dir)
+    }
     if (e.key === ' ' || e.key === 'Escape') {
       e.preventDefault()
       if (state.status === 'idle') startGame()
@@ -252,8 +285,12 @@ export function useGame() {
   const AI_DIRS: Direction[] = ['up', 'right', 'down', 'left']
   const G = GAME_CONFIG.gridSize
 
-  function key(x: number, y: number): string { return `${x},${y}` }
-  function inB(x: number, y: number): boolean { return x >= 0 && x < G && y >= 0 && y < G }
+  function key(x: number, y: number): string {
+    return `${x},${y}`
+  }
+  function inB(x: number, y: number): boolean {
+    return x >= 0 && x < G && y >= 0 && y < G
+  }
 
   function floodCount(sx: number, sy: number, blocked: Set<string>): number {
     const vis = new Set<string>()
@@ -262,10 +299,13 @@ export function useGame() {
     vis.add(key(sx, sy))
     let head2 = 0
     while (head2 < qx.length) {
-      const cx = qx[head2], cy = qy[head2]; head2++
+      const cx = qx[head2],
+        cy = qy[head2]
+      head2++
       for (const d of AI_DIRS) {
         const dd = DIRECTION_MAP[d]
-        const nx = cx + dd.x, ny = cy + dd.y
+        const nx = cx + dd.x,
+          ny = cy + dd.y
         const k = key(nx, ny)
         if (!inB(nx, ny) || blocked.has(k) || vis.has(k)) continue
         vis.add(k)
@@ -290,8 +330,10 @@ export function useGame() {
     }
     for (const o of state.obstacles) blocked.add(key(o.x, o.y))
 
-    const hx = hp.x, hy = hp.y
-    const fx = state.food.pos.x, fy = state.food.pos.y
+    const hx = hp.x,
+      hy = hp.y
+    const fx = state.food.pos.x,
+      fy = state.food.pos.y
     const tail = state.snake[state.snake.length - 1]
 
     let bestDir: Direction = state.direction
@@ -299,7 +341,8 @@ export function useGame() {
 
     for (const d of AI_DIRS) {
       const dd = DIRECTION_MAP[d]
-      const nx = hx + dd.x, ny = hy + dd.y
+      const nx = hx + dd.x,
+        ny = hy + dd.y
 
       // Skip if out of bounds or blocked
       if (!inB(nx, ny) || blocked.has(key(nx, ny))) continue
@@ -348,7 +391,10 @@ export function useGame() {
   }
 
   function stopAI() {
-    if (aiInterval) { clearInterval(aiInterval); aiInterval = null }
+    if (aiInterval) {
+      clearInterval(aiInterval)
+      aiInterval = null
+    }
   }
 
   function toggleAI() {
@@ -362,12 +408,26 @@ export function useGame() {
     if (state.status === 'idle') state.speed = speed
   }
 
-  onUnmounted(() => { clearTimers(); stopAI() })
+  onUnmounted(() => {
+    clearTimers()
+    stopAI()
+  })
 
   return {
-    state, head, length, aiEnabled, baseSpeed,
-    startGame, endGame, pauseGame, resumeGame, togglePause,
-    setDirection, handleKeydown, moveSnake,
-    toggleAI, setSpeed,
+    state,
+    head,
+    length,
+    aiEnabled,
+    baseSpeed,
+    startGame,
+    endGame,
+    pauseGame,
+    resumeGame,
+    togglePause,
+    setDirection,
+    handleKeydown,
+    moveSnake,
+    toggleAI,
+    setSpeed,
   }
 }

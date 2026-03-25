@@ -9,9 +9,7 @@
               <span class="label">Final Score</span>
               <span class="value">{{ score }}</span>
             </div>
-            <div v-if="isNewHighScore" class="new-best">
-              🎉 New High Score!
-            </div>
+            <div v-if="isNewHighScore" class="new-best">🎉 New High Score!</div>
             <div class="stats">
               <div class="stat">
                 <span>Snake Length</span>
@@ -24,12 +22,8 @@
             </div>
           </div>
           <div class="modal-actions">
-            <button class="btn btn-primary" @click="$emit('restart')">
-              ↻ Play Again
-            </button>
-            <button class="btn" @click="$emit('quit')">
-              ✕ Quit
-            </button>
+            <button class="btn btn-primary" @click="$emit('restart')">↻ Play Again</button>
+            <button class="btn" @click="$emit('quit')">✕ Quit</button>
           </div>
         </div>
       </div>
@@ -113,8 +107,13 @@ defineEmits<{
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
 }
 
 .stats {

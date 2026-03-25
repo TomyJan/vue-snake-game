@@ -5,11 +5,7 @@
     </header>
 
     <main class="main">
-      <ScoreBoard
-        :score="state.score"
-        :high-score="state.highScore"
-        :length="snakeLength"
-      />
+      <ScoreBoard :score="state.score" :high-score="state.highScore" :length="snakeLength" />
 
       <div class="board-wrapper">
         <GameBoard
@@ -40,14 +36,12 @@
         @set-speed="onSetSpeed"
       />
 
-      <MobileControls @direction="onDirection" />
+      <MobileControls :game-status="state.status" @direction="onDirection" />
 
       <p class="hint" v-if="state.status === 'idle'">
         Press <kbd>Space</kbd> or <kbd>↑↓←→</kbd> to start
       </p>
-      <p class="hint" v-else-if="state.status === 'starting'">
-        Get ready...
-      </p>
+      <p class="hint" v-else-if="state.status === 'starting'">Get ready...</p>
       <p class="hint" v-else-if="state.status === 'playing'">
         <kbd>Space</kbd> pause · <kbd>R</kbd> restart · <kbd>Q</kbd> quit
       </p>
@@ -107,8 +101,8 @@ const version = __APP_VERSION__
 const commitShort = __APP_COMMIT__
 const commitUrl = `https://github.com/TomyJan/vue-snake-game/commit/${__APP_COMMIT__}`
 
-const isNewHighScore = computed(() =>
-  state.status === 'gameover' && state.score > 0 && state.score >= state.highScore
+const isNewHighScore = computed(
+  () => state.status === 'gameover' && state.score > 0 && state.score >= state.highScore,
 )
 
 function onStart() {
@@ -126,19 +120,32 @@ function onEndGame() {
 }
 
 // Lock body scroll during active gameplay
-watch(() => state.status, (s) => {
-  if (s === 'playing' || s === 'starting') {
-    document.body.classList.add('game-active')
-  } else {
-    document.body.classList.remove('game-active')
-  }
-})
+watch(
+  () => state.status,
+  (s) => {
+    if (s === 'playing' || s === 'starting') {
+      document.body.classList.add('game-active')
+    } else {
+      document.body.classList.remove('game-active')
+    }
+  },
+)
 
-function onTogglePause() { togglePause() }
-function onToggleSound() { toggleSound() }
-function onToggleTheme() { toggleTheme() }
-function onToggleAI() { toggleAI() }
-function onSetSpeed(speed: number) { setSpeed(speed) }
+function onTogglePause() {
+  togglePause()
+}
+function onToggleSound() {
+  toggleSound()
+}
+function onToggleTheme() {
+  toggleTheme()
+}
+function onToggleAI() {
+  toggleAI()
+}
+function onSetSpeed(speed: number) {
+  setSpeed(speed)
+}
 
 function onDirection(dir: Direction) {
   if (state.status === 'idle' || state.status === 'starting') {
@@ -153,7 +160,9 @@ let prevLength = 3
 let prevStatus = 'idle'
 
 onMounted(() => {
-  nextTick(() => { appRef.value?.focus() })
+  nextTick(() => {
+    appRef.value?.focus()
+  })
 
   setInterval(() => {
     if (state.snake.length > prevLength) {

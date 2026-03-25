@@ -1,9 +1,6 @@
 import type { Position, FoodType, Food } from '../types/game'
 
-export function randomPosition(
-  gridSize: number,
-  exclude: Position[] = []
-): Position {
+export function randomPosition(gridSize: number, exclude: Position[] = []): Position {
   const maxAttempts = gridSize * gridSize
   for (let i = 0; i < maxAttempts; i++) {
     const pos: Position = {
@@ -28,27 +25,26 @@ export function positionsEqual(a: Position, b: Position): boolean {
   return a.x === b.x && a.y === b.y
 }
 
-export function clampSpeed(score: number, config: {
-  initialSpeed: number
-  speedIncrement: number
-  maxSpeed: number
-}): number {
+export function clampSpeed(
+  score: number,
+  config: {
+    initialSpeed: number
+    speedIncrement: number
+    maxSpeed: number
+  },
+): number {
   const speed = config.initialSpeed - Math.floor(score / 50) * config.speedIncrement
   return Math.max(speed, config.maxSpeed)
 }
 
 export function randomFoodType(): FoodType {
   const r = Math.random()
-  if (r < 0.1) return 'bonus'   // 10% chance
-  if (r < 0.18) return 'slow'   // 8% chance
+  if (r < 0.1) return 'bonus' // 10% chance
+  if (r < 0.18) return 'slow' // 8% chance
   return 'normal'
 }
 
-export function spawnFood(
-  gridSize: number,
-  snake: Position[],
-  obstacles: Position[]
-): Food {
+export function spawnFood(gridSize: number, snake: Position[], obstacles: Position[]): Food {
   const exclude = [...snake, ...obstacles]
   const pos = randomPosition(gridSize, exclude)
   const type = randomFoodType()
@@ -60,7 +56,7 @@ export function generateObstacles(
   gridSize: number,
   snake: Position[],
   food: Position,
-  count: number
+  count: number,
 ): Position[] {
   const obstacles: Position[] = []
   const exclude: Position[] = [...snake, food]
