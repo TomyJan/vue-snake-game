@@ -32,6 +32,7 @@ export function useGame() {
   let particleTimer: ReturnType<typeof setInterval> | null = null
   const aiEnabled = ref(false)
   let aiInterval: ReturnType<typeof setInterval> | null = null
+  let tailFrozen = false // true after eating: tail doesn't move next turn
 
   const head = computed(() => state.snake[0])
   const length = computed(() => state.snake.length)
@@ -57,6 +58,7 @@ export function useGame() {
     state.speed = baseSpeed.value
     state.particles = []
     state.status = 'starting'
+    tailFrozen = false
 
     startDelayTimer = setTimeout(() => {
       if (state.status === 'starting') {
@@ -175,6 +177,8 @@ export function useGame() {
     state.snake.unshift(newHead)
 
     if (ate) {
+      // Snake grows: tail stays, mark it frozen for next AI check
+      tailFrozen = true
       let points = 10
       let color = '#ff4444'
       let particleCount = 8
@@ -194,6 +198,7 @@ export function useGame() {
       return { ate: true }
     } else {
       state.snake.pop()
+      tailFrozen = false
       return { ate: false }
     }
   }
@@ -275,9 +280,12 @@ export function useGame() {
     const hp = head.value
     if (!hp) return 'right'
 
-    // Build blocked set: body (all except tail) + obstacles
+    // Build blocked set: body + obstacles
+    // After eating (tailFrozen), tail is still part of body → include it
     const blocked = new Set<string>()
-    for (let i = 0; i < state.snake.length - 1; i++) {
+    const excludeTail = !tailFrozen
+    const bodyEnd = excludeTail ? state.snake.length - 1 : state.snake.length
+    for (let i = 0; i < bodyEnd; i++) {
       blocked.add(key(state.snake[i].x, state.snake[i].y))
     }
     for (const o of state.obstacles) blocked.add(key(o.x, o.y))
