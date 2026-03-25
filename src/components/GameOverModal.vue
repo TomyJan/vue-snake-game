@@ -27,6 +27,9 @@
             <button class="btn btn-primary" @click="$emit('restart')">
               ↻ Play Again
             </button>
+            <button class="btn" @click="$emit('quit')">
+              ✕ Quit
+            </button>
           </div>
         </div>
       </div>
@@ -46,6 +49,7 @@ defineProps<{
 defineEmits<{
   close: []
   restart: []
+  quit: []
 }>()
 </script>
 
@@ -148,6 +152,10 @@ defineEmits<{
   font-size: 16px;
   cursor: pointer;
   transition: all 0.2s;
+}
+
+.btn:hover {
+  border-color: var(--accent);
 }
 
 .btn-primary {
