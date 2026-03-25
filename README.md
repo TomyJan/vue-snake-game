@@ -2,6 +2,14 @@
 
 A modern Snake game built with Vue 3, TypeScript, and Vite.
 
+## 🤖 Origin
+
+This project was **entirely developed by AI** using [OpenClaw](https://github.com/openclaw/openclaw) with the **Xiaomi MiMo** model (`openrouter/xiaomi/mimo-v2-pro`).
+
+- No human wrote any code
+- Requirements, architecture, implementation, and documentation were all AI-generated
+- Built autonomously in a single session
+
 ## Features
 
 - 🎮 Classic snake gameplay with smooth canvas rendering
@@ -47,6 +55,11 @@ Then open http://localhost:2333/
 ```
 src/
 ├── components/       # Vue components
+│   ├── GameBoard.vue
+│   ├── ScoreBoard.vue
+│   ├── GameControls.vue
+│   ├── GameOverModal.vue
+│   └── MobileControls.vue
 ├── composables/      # useGame, useTheme, useSound
 ├── types/            # TypeScript definitions
 ├── utils/            # Constants, helpers
@@ -54,3 +67,7 @@ src/
 ├── main.ts           # Entry point
 └── style.css         # Global styles
 ```
+
+## License
+
+MPL-2.0
