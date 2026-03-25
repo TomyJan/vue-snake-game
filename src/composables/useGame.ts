@@ -9,6 +9,7 @@ const START_DELAY_MS = 800 // Delay before snake starts moving after start/resta
 export function useGame() {
   const highScore = ref(Number(localStorage.getItem(HIGH_SCORE_KEY)) || 0)
   const countdown = ref(0)
+  const baseSpeed = ref(GAME_CONFIG.initialSpeed)
 
   const state = reactive<GameState>({
     snake: [],
@@ -51,7 +52,7 @@ export function useGame() {
     state.direction = 'right'
     state.nextDirection = 'right'
     state.score = 0
-    state.speed = GAME_CONFIG.initialSpeed
+    state.speed = baseSpeed.value
     state.status = 'starting'
 
     // Delay before snake starts moving
@@ -280,6 +281,13 @@ export function useGame() {
     }
   }
 
+  function setSpeed(speed: number) {
+    baseSpeed.value = speed
+    if (state.status === 'idle') {
+      state.speed = speed
+    }
+  }
+
   onUnmounted(() => {
     clearTimers()
     stopAI()
@@ -292,6 +300,7 @@ export function useGame() {
     tail,
     length,
     aiEnabled,
+    baseSpeed,
     startGame,
     pauseGame,
     resumeGame,
@@ -300,5 +309,6 @@ export function useGame() {
     handleKeydown,
     moveSnake,
     toggleAI,
+    setSpeed,
   }
 }
