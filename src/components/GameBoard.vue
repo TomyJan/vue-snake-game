@@ -57,64 +57,81 @@ function draw() {
   }
 
   // Food with glow
-  const foodX = props.food.x * cellSize + cellSize / 2
-  const foodY = props.food.y * cellSize + cellSize / 2
-  const pulse = 0.8 + 0.2 * Math.sin(now / 200)
-  const foodRadius = (cellSize / 2 - 2) * pulse
+  if (props.food && props.status !== 'idle') {
+    const foodX = props.food.x * cellSize + cellSize / 2
+    const foodY = props.food.y * cellSize + cellSize / 2
+    const pulse = 0.8 + 0.2 * Math.sin(now / 200)
+    const foodRadius = (cellSize / 2 - 2) * pulse
 
-  // Glow
-  ctx.shadowColor = colors.foodGlow
-  ctx.shadowBlur = 12
-  ctx.beginPath()
-  ctx.arc(foodX, foodY, foodRadius, 0, Math.PI * 2)
-  ctx.fillStyle = colors.food
-  ctx.fill()
-  ctx.shadowBlur = 0
+    ctx.shadowColor = colors.foodGlow
+    ctx.shadowBlur = 12
+    ctx.beginPath()
+    ctx.arc(foodX, foodY, foodRadius, 0, Math.PI * 2)
+    ctx.fillStyle = colors.food
+    ctx.fill()
+    ctx.shadowBlur = 0
+  }
 
   // Snake
-  props.snake.forEach((seg, i) => {
-    const x = seg.x * cellSize
-    const y = seg.y * cellSize
-    const pad = i === 0 ? 1 : 2
-    const size = cellSize - pad * 2
+  if (props.snake.length > 0) {
+    props.snake.forEach((seg, i) => {
+      const x = seg.x * cellSize
+      const y = seg.y * cellSize
+      const pad = i === 0 ? 1 : 2
+      const size = cellSize - pad * 2
 
-    // Gradient from head to tail
-    const ratio = i / Math.max(props.snake.length - 1, 1)
-    if (i === 0) {
-      ctx.fillStyle = colors.snakeHead
-    } else if (ratio < 0.5) {
-      ctx.fillStyle = colors.snakeBody
-    } else {
-      ctx.fillStyle = colors.snakeTail
-    }
+      const ratio = i / Math.max(props.snake.length - 1, 1)
+      if (i === 0) {
+        ctx.fillStyle = colors.snakeHead
+      } else if (ratio < 0.5) {
+        ctx.fillStyle = colors.snakeBody
+      } else {
+        ctx.fillStyle = colors.snakeTail
+      }
 
-    // Rounded rectangle for segments
-    const radius = i === 0 ? 6 : 4
-    ctx.beginPath()
-    ctx.roundRect(x + pad, y + pad, size, size, radius)
-    ctx.fill()
-
-    // Eyes on head
-    if (i === 0) {
-      ctx.fillStyle = colors.gridBg
-      const eyeSize = 3
+      const radius = i === 0 ? 6 : 4
       ctx.beginPath()
-      ctx.arc(x + cellSize * 0.3, y + cellSize * 0.35, eyeSize, 0, Math.PI * 2)
+      ctx.roundRect(x + pad, y + pad, size, size, radius)
       ctx.fill()
-      ctx.beginPath()
-      ctx.arc(x + cellSize * 0.7, y + cellSize * 0.35, eyeSize, 0, Math.PI * 2)
-      ctx.fill()
-    }
-  })
 
-  // Paused overlay
+      // Eyes on head
+      if (i === 0) {
+        ctx.fillStyle = colors.gridBg
+        const eyeSize = 3
+        ctx.beginPath()
+        ctx.arc(x + cellSize * 0.3, y + cellSize * 0.35, eyeSize, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.beginPath()
+        ctx.arc(x + cellSize * 0.7, y + cellSize * 0.35, eyeSize, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    })
+  }
+
+  // Overlays
   if (props.status === 'paused') {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'
-    ctx.fillRect(0, 0, canvasSize.value, canvasSize.value)
-    ctx.fillStyle = '#ffffff'
-    ctx.font = 'bold 24px sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText('PAUSED', canvasSize.value / 2, canvasSize.value / 2)
+    drawOverlay(ctx, '⏸ PAUSED', 'Press Space to resume')
+  } else if (props.status === 'starting') {
+    drawOverlay(ctx, '🐍 GET READY!', 'Use arrow keys or WASD to move')
+  } else if (props.status === 'idle') {
+    drawOverlay(ctx, '🐍 SNAKE', 'Press Space to start')
+  }
+}
+
+function drawOverlay(ctx: CanvasRenderingContext2D, title: string, subtitle?: string) {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+  ctx.fillRect(0, 0, canvasSize.value, canvasSize.value)
+
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 24px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(title, canvasSize.value / 2, canvasSize.value / 2 - (subtitle ? 14 : 0))
+
+  if (subtitle) {
+    ctx.font = '14px sans-serif'
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
+    ctx.fillText(subtitle, canvasSize.value / 2, canvasSize.value / 2 + 18)
   }
 }
 
@@ -132,7 +149,6 @@ onUnmounted(() => {
   cancelAnimationFrame(animFrame)
 })
 
-// Redraw when snake or food changes
 watch(() => [props.snake, props.food, props.status], () => {
   draw()
 }, { deep: true })
