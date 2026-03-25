@@ -7,6 +7,13 @@
     >
       ▶ Start Game
     </button>
+    <button
+      v-if="status === 'starting'"
+      class="btn"
+      disabled
+    >
+      ⏳ Starting...
+    </button>
     <template v-if="status === 'playing' || status === 'paused'">
       <button
         class="btn"
@@ -30,6 +37,14 @@
       </button>
     </template>
     <div class="side-controls">
+      <button
+        class="btn"
+        :class="{ 'btn-active': aiEnabled }"
+        :title="aiEnabled ? 'Disable AI' : 'Enable AI Auto-Play'"
+        @click="$emit('toggle-ai')"
+      >
+        {{ aiEnabled ? '🤖 ON' : '🤖 OFF' }}
+      </button>
       <button
         class="btn btn-icon"
         :title="soundEnabled ? 'Mute' : 'Unmute'"
@@ -55,6 +70,7 @@ defineProps<{
   status: GameStatus
   soundEnabled: boolean
   theme: Theme
+  aiEnabled: boolean
 }>()
 
 defineEmits<{
@@ -63,6 +79,7 @@ defineEmits<{
   'toggle-pause': []
   'toggle-sound': []
   'toggle-theme': []
+  'toggle-ai': []
 }>()
 </script>
 
@@ -86,9 +103,14 @@ defineEmits<{
   transition: all 0.2s;
 }
 
-.btn:hover {
+.btn:hover:not(:disabled) {
   border-color: var(--accent);
   transform: translateY(-1px);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .btn-primary {
@@ -110,6 +132,13 @@ defineEmits<{
 .btn-danger:hover {
   background: var(--danger);
   color: #fff;
+}
+
+.btn-active {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+  font-weight: bold;
 }
 
 .btn-icon {
