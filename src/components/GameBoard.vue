@@ -9,19 +9,20 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
-import type { Position } from '../types/game'
+import type { Position, Food, Particle } from '../types/game'
 import { GAME_CONFIG, DARK_THEME, LIGHT_THEME } from '../utils/constants'
 import { useTheme } from '../composables/useTheme'
 
 const props = defineProps<{
   snake: Position[]
-  food: Position
+  food: Food
+  obstacles: Position[]
+  particles: Particle[]
   status: string
 }>()
 
 const { theme } = useTheme()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
-
 const canvasSize = computed(() => GAME_CONFIG.gridSize * GAME_CONFIG.cellSize)
 
 function getColors() {
@@ -56,20 +57,78 @@ function draw() {
     ctx.stroke()
   }
 
-  // Food with glow
-  if (props.food && props.status !== 'idle') {
-    const foodX = props.food.x * cellSize + cellSize / 2
-    const foodY = props.food.y * cellSize + cellSize / 2
+  // Obstacles
+  for (const obs of props.obstacles) {
+    const x = obs.x * cellSize
+    const y = obs.y * cellSize
+    ctx.fillStyle = colors.obstacle
+    ctx.beginPath()
+    ctx.roundRect(x + 2, y + 2, cellSize - 4, cellSize - 4, 4)
+    ctx.fill()
+    // Cross pattern
+    ctx.strokeStyle = colors.gridBg
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(x + 6, y + 6)
+    ctx.lineTo(x + cellSize - 6, y + cellSize - 6)
+    ctx.moveTo(x + cellSize - 6, y + 6)
+    ctx.lineTo(x + 6, y + cellSize - 6)
+    ctx.stroke()
+  }
+
+  // Food
+  if (props.food && props.food.pos && props.status !== 'idle') {
+    const foodX = props.food.pos.x * cellSize + cellSize / 2
+    const foodY = props.food.pos.y * cellSize + cellSize / 2
     const pulse = 0.8 + 0.2 * Math.sin(now / 200)
     const foodRadius = (cellSize / 2 - 2) * pulse
 
-    ctx.shadowColor = colors.foodGlow
-    ctx.shadowBlur = 12
+    let foodColor = colors.food
+    let glowColor = colors.foodGlow
+
+    if (props.food.type === 'bonus') {
+      foodColor = colors.bonusFood
+      glowColor = colors.bonusGlow
+    } else if (props.food.type === 'slow') {
+      foodColor = colors.slowFood
+      glowColor = colors.slowGlow
+    }
+
+    ctx.shadowColor = glowColor
+    ctx.shadowBlur = 14
     ctx.beginPath()
     ctx.arc(foodX, foodY, foodRadius, 0, Math.PI * 2)
-    ctx.fillStyle = colors.food
+    ctx.fillStyle = foodColor
     ctx.fill()
     ctx.shadowBlur = 0
+
+    // Label
+    if (props.food.type === 'bonus') {
+      ctx.fillStyle = '#000'
+      ctx.font = 'bold 12px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('×3', foodX, foodY)
+    } else if (props.food.type === 'slow') {
+      ctx.fillStyle = '#fff'
+      ctx.font = 'bold 11px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('❄', foodX, foodY)
+    }
+
+    // Timer for bonus food
+    if (props.food.expiresAt) {
+      const remaining = Math.max(0, props.food.expiresAt - now)
+      const pct = remaining / 8000
+      if (pct < 0.5 && pct > 0) {
+        ctx.strokeStyle = foodColor
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(foodX, foodY, foodRadius + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pct)
+        ctx.stroke()
+      }
+    }
   }
 
   // Snake
@@ -81,20 +140,15 @@ function draw() {
       const size = cellSize - pad * 2
 
       const ratio = i / Math.max(props.snake.length - 1, 1)
-      if (i === 0) {
-        ctx.fillStyle = colors.snakeHead
-      } else if (ratio < 0.5) {
-        ctx.fillStyle = colors.snakeBody
-      } else {
-        ctx.fillStyle = colors.snakeTail
-      }
+      if (i === 0) ctx.fillStyle = colors.snakeHead
+      else if (ratio < 0.5) ctx.fillStyle = colors.snakeBody
+      else ctx.fillStyle = colors.snakeTail
 
       const radius = i === 0 ? 6 : 4
       ctx.beginPath()
       ctx.roundRect(x + pad, y + pad, size, size, radius)
       ctx.fill()
 
-      // Eyes on head
       if (i === 0) {
         ctx.fillStyle = colors.gridBg
         const eyeSize = 3
@@ -108,26 +162,30 @@ function draw() {
     })
   }
 
-  // Overlays
-  if (props.status === 'paused') {
-    drawOverlay(ctx, '⏸ PAUSED', 'Press Space to resume')
-  } else if (props.status === 'starting') {
-    drawOverlay(ctx, '🐍 GET READY!', 'Use arrow keys or WASD to move')
-  } else if (props.status === 'idle') {
-    drawOverlay(ctx, '🐍 SNAKE', 'Press Space to start')
+  // Particles
+  for (const p of props.particles) {
+    ctx.globalAlpha = p.life
+    ctx.fillStyle = p.color
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2)
+    ctx.fill()
   }
+  ctx.globalAlpha = 1
+
+  // Overlays
+  if (props.status === 'paused') drawOverlay(ctx, '⏸ PAUSED', 'Press Space to resume')
+  else if (props.status === 'starting') drawOverlay(ctx, '🐍 GET READY!', 'Use arrow keys or WASD to move')
+  else if (props.status === 'idle') drawOverlay(ctx, '🐍 SNAKE', 'Press Space to start')
 }
 
 function drawOverlay(ctx: CanvasRenderingContext2D, title: string, subtitle?: string) {
   ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
   ctx.fillRect(0, 0, canvasSize.value, canvasSize.value)
-
   ctx.fillStyle = '#ffffff'
   ctx.font = 'bold 24px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(title, canvasSize.value / 2, canvasSize.value / 2 - (subtitle ? 14 : 0))
-
   if (subtitle) {
     ctx.font = '14px sans-serif'
     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
@@ -136,22 +194,10 @@ function drawOverlay(ctx: CanvasRenderingContext2D, title: string, subtitle?: st
 }
 
 let animFrame = 0
-function animate() {
-  draw()
-  animFrame = requestAnimationFrame(animate)
-}
-
-onMounted(() => {
-  animate()
-})
-
-onUnmounted(() => {
-  cancelAnimationFrame(animFrame)
-})
-
-watch(() => [props.snake, props.food, props.status], () => {
-  draw()
-}, { deep: true })
+function animate() { draw(); animFrame = requestAnimationFrame(animate) }
+onMounted(() => animate())
+onUnmounted(() => cancelAnimationFrame(animFrame))
+watch(() => [props.snake, props.food, props.obstacles, props.particles, props.status], () => draw(), { deep: true })
 </script>
 
 <style scoped>
@@ -164,7 +210,6 @@ watch(() => [props.snake, props.food, props.status], () => {
   max-height: 60vh;
   width: 480px;
   height: 480px;
-  object-fit: contain;
 }
 
 @media (max-width: 500px) {
