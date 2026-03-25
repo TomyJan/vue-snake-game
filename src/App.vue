@@ -15,6 +15,8 @@
         <GameBoard
           :snake="state.snake"
           :food="state.food"
+          :obstacles="state.obstacles"
+          :particles="state.particles"
           :status="state.status"
         />
       </div>
