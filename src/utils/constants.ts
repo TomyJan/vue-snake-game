@@ -1,0 +1,71 @@
+import type { GameConfig, ThemeConfig, Direction, Position } from '../types/game'
+
+export const GAME_CONFIG: GameConfig = {
+  gridSize: 20,
+  cellSize: 24,
+  initialSpeed: 150,
+  speedIncrement: 5,
+  maxSpeed: 60,
+  initialLength: 3,
+}
+
+export const DIRECTION_MAP: Record<Direction, Position> = {
+  up: { x: 0, y: -1 },
+  down: { x: 0, y: 1 },
+  left: { x: -1, y: 0 },
+  right: { x: 1, y: 0 },
+}
+
+export const OPPOSITE_DIRECTION: Record<Direction, Direction> = {
+  up: 'down',
+  down: 'up',
+  left: 'right',
+  right: 'left',
+}
+
+export const KEY_DIRECTION_MAP: Record<string, Direction> = {
+  ArrowUp: 'up',
+  ArrowDown: 'down',
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+  w: 'up',
+  W: 'up',
+  s: 'down',
+  S: 'down',
+  a: 'left',
+  A: 'left',
+  d: 'right',
+  D: 'right',
+}
+
+export const DARK_THEME: ThemeConfig = {
+  background: '#0a0a0a',
+  gridBg: '#111111',
+  gridLine: '#1a1a1a',
+  snakeHead: '#00ff88',
+  snakeBody: '#00cc6a',
+  snakeTail: '#00994d',
+  food: '#ff4444',
+  foodGlow: 'rgba(255, 68, 68, 0.4)',
+  text: '#ffffff',
+  accent: '#00ff88',
+  danger: '#ff4444',
+  card: '#1a1a1a',
+  cardBorder: '#2a2a2a',
+}
+
+export const LIGHT_THEME: ThemeConfig = {
+  background: '#f0f0f0',
+  gridBg: '#ffffff',
+  gridLine: '#e0e0e0',
+  snakeHead: '#00aa55',
+  snakeBody: '#008844',
+  snakeTail: '#006633',
+  food: '#ee2222',
+  foodGlow: 'rgba(238, 34, 34, 0.3)',
+  text: '#1a1a1a',
+  accent: '#00aa55',
+  danger: '#ee2222',
+  card: '#ffffff',
+  cardBorder: '#dddddd',
+}
