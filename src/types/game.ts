@@ -26,6 +26,8 @@ export interface GameConfig {
   initialLength: number
 }
 
+export type SpeedLevel = 'slow' | 'normal' | 'fast' | 'insane'
+
 export type Theme = 'dark' | 'light'
 
 export interface ThemeConfig {
