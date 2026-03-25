@@ -121,6 +121,13 @@ const showGameOverModal = ref(false)
 let gameOverTimeout: ReturnType<typeof setTimeout> | null = null
 
 watch(() => state.status, (newStatus, oldStatus) => {
+  // Lock body scroll during active gameplay
+  if (newStatus === 'playing' || newStatus === 'starting') {
+    document.body.classList.add('game-active')
+  } else {
+    document.body.classList.remove('game-active')
+  }
+
   if (newStatus === 'gameover' && oldStatus === 'playing') {
     gameOverTimeout = setTimeout(() => {
       showGameOverModal.value = true
@@ -217,8 +224,8 @@ onUnmounted(() => {
 <style scoped>
 .app {
   width: 100%;
-  height: 100vh;
-  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -226,7 +233,13 @@ onUnmounted(() => {
   background: var(--bg);
   color: var(--text);
   outline: none;
-  overflow: hidden;
+}
+
+/* Mobile: during game, lock to viewport */
+@media (max-width: 600px) {
+  .app {
+    padding: 12px 8px 16px;
+  }
 }
 
 .header {
