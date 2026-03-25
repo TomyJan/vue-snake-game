@@ -45,6 +45,8 @@ export const KEY_DIRECTION_MAP: Record<string, Direction> = {
   D: 'right',
 }
 
+export const OBSTACLE_COUNT = 8
+
 export const DARK_THEME: ThemeConfig = {
   background: '#0a0a0a',
   gridBg: '#111111',
@@ -54,6 +56,11 @@ export const DARK_THEME: ThemeConfig = {
   snakeTail: '#00994d',
   food: '#ff4444',
   foodGlow: 'rgba(255, 68, 68, 0.4)',
+  bonusFood: '#ffd700',
+  bonusGlow: 'rgba(255, 215, 0, 0.5)',
+  slowFood: '#4488ff',
+  slowGlow: 'rgba(68, 136, 255, 0.4)',
+  obstacle: '#555555',
   text: '#ffffff',
   accent: '#00ff88',
   danger: '#ff4444',
@@ -70,6 +77,11 @@ export const LIGHT_THEME: ThemeConfig = {
   snakeTail: '#006633',
   food: '#ee2222',
   foodGlow: 'rgba(238, 34, 34, 0.3)',
+  bonusFood: '#cc9900',
+  bonusGlow: 'rgba(204, 153, 0, 0.4)',
+  slowFood: '#3366cc',
+  slowGlow: 'rgba(51, 102, 204, 0.3)',
+  obstacle: '#999999',
   text: '#1a1a1a',
   accent: '#00aa55',
   danger: '#ee2222',
