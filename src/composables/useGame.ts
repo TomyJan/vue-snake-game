@@ -250,183 +250,204 @@ export function useGame() {
     }
   }
 
-  // === AI - Hamiltonian Cycle with Shortcuts ===
-  const DIR_PRIORITY: Direction[] = ['up', 'right', 'down', 'left']
-  let hamiltonianCycle: Position[] = []
-  let cycleIndex: Map<string, number> = new Map()
+  // === AI - Hamiltonian Cycle + Greedy Shortcuts ===
+  const DIRS: Direction[] = ['up', 'right', 'down', 'left']
+  let cycle: Position[] = []       // Hamiltonian cycle cells in order
+  let cycleIdx: Map<string, number> = new Map()
 
-  function posKey(p: Position): string { return `${p.x},${p.y}` }
+  function pk(p: Position): string { return `${p.x},${p.y}` }
 
-  function nextPos(pos: Position, dir: Direction): Position {
+  function move(pos: Position, dir: Direction): Position {
     const d = DIRECTION_MAP[dir]
     return { x: pos.x + d.x, y: pos.y + d.y }
   }
 
-  function isInBounds(p: Position): boolean {
+  function inBounds(p: Position): boolean {
     return p.x >= 0 && p.x < GAME_CONFIG.gridSize && p.y >= 0 && p.y < GAME_CONFIG.gridSize
   }
 
-  // Build a Hamiltonian cycle using zigzag pattern
-  // For even-sized grids, this guarantees a cycle covering every cell
-  function buildHamiltonianCycle(): void {
+  function dirBetween(a: Position, b: Position): Direction | null {
+    if (b.x === a.x + 1 && b.y === a.y) return 'right'
+    if (b.x === a.x - 1 && b.y === a.y) return 'left'
+    if (b.x === a.x && b.y === a.y + 1) return 'down'
+    if (b.x === a.x && b.y === a.y - 1) return 'up'
+    return null
+  }
+
+  // Build zigzag Hamiltonian cycle
+  function buildCycle() {
     const n = GAME_CONFIG.gridSize
-    const cycle: Position[] = []
-
-    // Zigzag: row 0 left→right, row 1 right→left, etc.
+    const c: Position[] = []
     for (let y = 0; y < n; y++) {
-      if (y % 2 === 0) {
-        for (let x = 0; x < n; x++) cycle.push({ x, y })
-      } else {
-        for (let x = n - 1; x >= 0; x--) cycle.push({ x, y })
-      }
+      if (y % 2 === 0) { for (let x = 0; x < n; x++) c.push({ x, y }) }
+      else { for (let x = n - 1; x >= 0; x--) c.push({ x, y }) }
     }
-
-    // For odd grids, zigzag doesn't connect end→start.
-    // Use a modified pattern that connects vertically at edges.
-    if (n % 2 !== 0) {
-      // Rebuild with column-first zigzag for odd grids
-      cycle.length = 0
-      for (let x = 0; x < n; x++) {
-        if (x % 2 === 0) {
-          for (let y = 0; y < n; y++) cycle.push({ x, y })
-        } else {
-          for (let y = n - 1; y >= 0; y--) cycle.push({ x, y })
-        }
-      }
-    }
-
-    hamiltonianCycle = cycle
-    cycleIndex = new Map()
-    for (let i = 0; i < cycle.length; i++) {
-      cycleIndex.set(posKey(cycle[i]), i)
-    }
+    cycle = c
+    cycleIdx = new Map()
+    for (let i = 0; i < c.length; i++) cycleIdx.set(pk(c[i]), i)
   }
 
-  // Get next position on the cycle
-  function cycleNext(pos: Position): Position {
-    const idx = cycleIndex.get(posKey(pos))
-    if (idx === undefined) return pos
-    return hamiltonianCycle[(idx + 1) % hamiltonianCycle.length]
-  }
-
-  function buildOccupied(): Set<string> {
+  // Occupied set: all body segments + obstacles
+  function occupied(): Set<string> {
     const s = new Set<string>()
-    for (let i = 0; i < state.snake.length; i++) s.add(posKey(state.snake[i]))
-    for (const o of state.obstacles) s.add(posKey(o))
+    for (const seg of state.snake) s.add(pk(seg))
+    for (const o of state.obstacles) s.add(pk(o))
     return s
   }
 
-  function bfsPath(start: Position, target: Position, occupied: Set<string>): Direction | null {
-    const visited = new Set<string>()
-    const queue: { pos: Position; firstDir: Direction }[] = []
-    visited.add(posKey(start))
-
-    for (const dir of DIR_PRIORITY) {
-      const n = nextPos(start, dir)
-      const k = posKey(n)
-      if (isInBounds(n) && !occupied.has(k)) {
-        visited.add(k)
-        if (positionsEqual(n, target)) return dir
-        queue.push({ pos: n, firstDir: dir })
+  // BFS: returns first-step direction to target, or null
+  function bfs(start: Position, target: Position, occ: Set<string>): Direction | null {
+    const vis = new Set<string>()
+    const q: { p: Position; d: Direction }[] = []
+    vis.add(pk(start))
+    for (const dir of DIRS) {
+      const n = move(start, dir)
+      if (inBounds(n) && !occ.has(pk(n))) {
+        vis.add(pk(n))
+        if (n.x === target.x && n.y === target.y) return dir
+        q.push({ p: n, d: dir })
       }
     }
-
-    while (queue.length > 0) {
-      const { pos, firstDir } = queue.shift()!
-      for (const dir of DIR_PRIORITY) {
-        const n = nextPos(pos, dir)
-        const k = posKey(n)
-        if (visited.has(k) || !isInBounds(n) || occupied.has(k)) continue
-        visited.add(k)
-        if (positionsEqual(n, target)) return firstDir
-        queue.push({ pos: n, firstDir })
+    while (q.length > 0) {
+      const { p, d } = q.shift()!
+      for (const dir of DIRS) {
+        const n = move(p, dir)
+        const k = pk(n)
+        if (!inBounds(n) || occ.has(k) || vis.has(k)) continue
+        vis.add(k)
+        if (n.x === target.x && n.y === target.y) return d
+        q.push({ p: n, d })
       }
     }
     return null
   }
 
-  function floodFill(start: Position, occupied: Set<string>): number {
-    const visited = new Set<string>()
-    const queue: Position[] = [start]
-    visited.add(posKey(start))
-
-    while (queue.length > 0) {
-      const pos = queue.shift()!
-      for (const dir of DIR_PRIORITY) {
-        const n = nextPos(pos, dir)
-        const k = posKey(n)
-        if (visited.has(k) || !isInBounds(n) || occupied.has(k)) continue
-        visited.add(k)
-        queue.push(n)
+  // Heuristic longest path: extend shortest path by detouring
+  function longestPathLen(start: Position, target: Position, occ: Set<string>): number {
+    // BFS shortest path
+    const vis = new Set<string>()
+    const q: { p: Position; len: number }[] = [{ p: start, len: 0 }]
+    vis.add(pk(start))
+    let bestLen = 0
+    while (q.length > 0) {
+      const { p, len } = q.shift()!
+      if (p.x === target.x && p.y === target.y) { bestLen = len; break }
+      for (const dir of DIRS) {
+        const n = move(p, dir)
+        const k = pk(n)
+        if (!inBounds(n) || occ.has(k) || vis.has(k)) continue
+        vis.add(k)
+        q.push({ p: n, len: len + 1 })
       }
     }
-    return visited.size
+    return bestLen
   }
 
-  function dirBetween(from: Position, to: Position): Direction | null {
-    const dx = to.x - from.x
-    const dy = to.y - from.y
-    if (dx === 1 && dy === 0) return 'right'
-    if (dx === -1 && dy === 0) return 'left'
-    if (dx === 0 && dy === 1) return 'down'
-    if (dx === 0 && dy === -1) return 'up'
-    return null
+  // Simulate snake moving along a BFS path step by step
+  function simMove(start: Position, target: Position, occ: Set<string>): { snake: Position[]; reached: boolean } {
+    // BFS to find full path
+    const vis = new Map<string, { p: Position; dir: Direction }>()
+    const q: Position[] = [start]
+    vis.set(pk(start), { p: start, dir: 'right' })
+    let found = false
+    while (q.length > 0 && !found) {
+      const p = q.shift()!
+      for (const dir of DIRS) {
+        const n = move(p, dir)
+        const k = pk(n)
+        if (!inBounds(n) || occ.has(k) || vis.has(k)) continue
+        vis.set(k, { p, dir })
+        if (n.x === target.x && n.y === target.y) { found = true; break }
+        q.push(n)
+      }
+    }
+    if (!found) return { snake: [], reached: false }
+
+    // Reconstruct path
+    const path: Position[] = []
+    let cur = target
+    while (cur.x !== start.x || cur.y !== start.y) {
+      path.unshift(cur)
+      const prev = vis.get(pk(cur))
+      if (!prev) break
+      cur = prev.p
+    }
+
+    // Simulate: move snake along path
+    const simSnake = [...state.snake]
+    for (const step of path) {
+      simSnake.unshift(step)  // add new head
+      simSnake.pop()           // remove tail (not eating yet)
+    }
+    // Last step: snake reaches food, grows (tail stays)
+    // simSnake already has the new head + all old body (pop removed last tail)
+    // But we need to NOT pop on the last step (eating)
+    // Re-do: pop only path.length - 1 times
+    const simSnake2 = [...state.snake]
+    for (let i = 0; i < path.length; i++) {
+      simSnake2.unshift(path[i])
+      if (i < path.length - 1) simSnake2.pop() // don't pop on last step (eating)
+    }
+    return { snake: simSnake2, reached: true }
   }
 
   function findSafeDirection(): Direction {
     const headPos = head.value
     if (!headPos) return 'right'
-    if (hamiltonianCycle.length === 0) buildHamiltonianCycle()
+    if (cycle.length === 0) buildCycle()
 
-    const headKey = posKey(headPos)
+    const occ = occupied()
     const foodPos = state.food.pos
-    const occupied = buildOccupied()
     const snakeLen = state.snake.length
 
-    // 1. Try shortcut to food: BFS path + safety check
-    const foodDir = bfsPath(headPos, foodPos, occupied)
+    // Strategy 1: BFS shortcut to food
+    const foodDir = bfs(headPos, foodPos, occ)
     if (foodDir) {
-      const foodNext = nextPos(headPos, foodDir)
-      // After eating: snake grows, tail stays
-      const newOccupied = new Set(occupied)
-      newOccupied.add(posKey(foodNext))
-      const space = floodFill(foodNext, newOccupied)
-      if (space > snakeLen + 5) {
-        return foodDir
+      // Simulate: snake moves along path to food, grows at end
+      const sim = simMove(headPos, foodPos, occ)
+      if (sim.reached) {
+        // Build occupied from simulated snake
+        const simOcc = new Set<string>()
+        for (const seg of sim.snake) simOcc.add(pk(seg))
+        for (const o of state.obstacles) simOcc.add(pk(o))
+        // Check: can head reach any point ahead on the cycle?
+        // Use longest path heuristic: if head can find a path longer than snake, it's safe
+        const simHead = sim.snake[0]
+        const simTail = sim.snake[sim.snake.length - 1]
+        const pathLen = longestPathLen(simHead, simTail, simOcc)
+        if (pathLen >= snakeLen) {
+          return foodDir
+        }
       }
     }
 
-    // 2. Follow Hamiltonian cycle
-    const nextOnCycle = cycleNext(headPos)
-    const nextKey = posKey(nextOnCycle)
-    if (!occupied.has(nextKey) && isInBounds(nextOnCycle)) {
-      return dirBetween(headPos, nextOnCycle) ?? 'right'
-    }
-
-    // 3. Cycle blocked: BFS to next free cell on cycle
-    // Find the nearest unoccupied cell ahead on the cycle
-    const cycleLen = hamiltonianCycle.length
-    const startIdx = cycleIndex.get(headKey) ?? 0
-    for (let offset = 1; offset < cycleLen; offset++) {
-      const targetIdx = (startIdx + offset) % cycleLen
-      const target = hamiltonianCycle[targetIdx]
-      if (!occupied.has(posKey(target)) && isInBounds(target)) {
-        const dir = bfsPath(headPos, target, occupied)
-        if (dir) return dir
+    // Strategy 2: Follow Hamiltonian cycle
+    const hIdx = cycleIdx.get(pk(headPos))
+    if (hIdx !== undefined) {
+      const nextCell = cycle[(hIdx + 1) % cycle.length]
+      if (!occ.has(pk(nextCell)) && inBounds(nextCell)) {
+        const d = dirBetween(headPos, nextCell)
+        if (d) return d
+      }
+      // Cycle blocked: BFS to next reachable cycle cell
+      for (let off = 1; off < cycle.length; off++) {
+        const target = cycle[(hIdx + off) % cycle.length]
+        if (!occ.has(pk(target)) && inBounds(target)) {
+          const d = bfs(headPos, target, occ)
+          if (d) return d
+        }
       }
     }
 
-    // 4. Emergency: any safe direction
-    for (const dir of DIR_PRIORITY) {
-      const n = nextPos(headPos, dir)
-      if (isInBounds(n) && !occupied.has(posKey(n))) return dir
+    // Strategy 3: Any safe direction
+    for (const dir of DIRS) {
+      const n = move(headPos, dir)
+      if (inBounds(n) && !occ.has(pk(n))) return dir
     }
-
     return 'right'
   }
 
-  // Initialize cycle
-  buildHamiltonianCycle()
+  buildCycle()
 
   function aiTick() {
     if (state.status !== 'playing') return
