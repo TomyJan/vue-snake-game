@@ -3,15 +3,35 @@ export interface Position {
   y: number
 }
 
+export type FoodType = 'normal' | 'bonus' | 'slow'
+
+export interface Food {
+  pos: Position
+  type: FoodType
+  expiresAt?: number
+}
+
+export interface Particle {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  life: number
+  color: string
+  size: number
+}
+
 export interface GameState {
   snake: Position[]
-  food: Position
+  food: Food
+  obstacles: Position[]
   direction: Direction
   nextDirection: Direction
   score: number
   highScore: number
   status: GameStatus
   speed: number
+  particles: Particle[]
 }
 
 export type Direction = 'up' | 'down' | 'left' | 'right'
@@ -39,6 +59,11 @@ export interface ThemeConfig {
   snakeTail: string
   food: string
   foodGlow: string
+  bonusFood: string
+  bonusGlow: string
+  slowFood: string
+  slowGlow: string
+  obstacle: string
   text: string
   accent: string
   danger: string
