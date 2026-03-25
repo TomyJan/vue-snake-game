@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [vue()],
   base: '/vue-snake-game/',
   define: {
-    __APP_VERSION__: JSON.stringify('1.0.0'),
+    __APP_VERSION__: JSON.stringify('1.1.0'),
     __APP_COMMIT__: JSON.stringify(commitHash),
   },
   server: {
