@@ -37,7 +37,6 @@ export function useGame() {
   let slowBuffTimer: ReturnType<typeof setTimeout> | null = null
   let particleTimer: ReturnType<typeof setInterval> | null = null
   const aiEnabled = ref(false)
-  let aiInterval: ReturnType<typeof setInterval> | null = null
   let tailFrozen = false // true after eating: tail doesn't move next turn
 
   const head = computed(() => state.snake[0])
@@ -76,14 +75,12 @@ export function useGame() {
         state.status = 'playing'
         startGameTimer()
         startParticleTimer()
-        if (aiEnabled.value) startAI()
       }
     }, START_DELAY_MS)
   }
 
   function endGame() {
     clearTimers()
-    stopAI()
     state.status = 'idle'
   }
 
@@ -91,8 +88,7 @@ export function useGame() {
     if (state.status === 'playing') {
       state.status = 'paused'
       stopGameTimer()
-      stopAI()
-    }
+      }
   }
 
   function resumeGame() {
@@ -111,7 +107,6 @@ export function useGame() {
   function gameOver() {
     state.status = 'gameover'
     clearTimers()
-    stopAI()
     if (state.score > highScore.value) {
       highScore.value = state.score
       localStorage.setItem(HIGH_SCORE_KEY, String(state.score))
@@ -222,7 +217,7 @@ export function useGame() {
   function startGameTimer() {
     stopGameTimer()
     gameTimer = setInterval(() => {
-      moveSnake()
+      gameTick()
     }, state.speed)
   }
 
@@ -316,92 +311,79 @@ export function useGame() {
     return vis.size
   }
 
-  function findSafeDirection(): Direction {
-    const hp = head.value
-    if (!hp) return 'right'
-
-    // Build blocked set: body (skip head at [0]) + obstacles
-    // After eating (tailFrozen), include tail too
-    const blocked = new Set<string>()
-    const excludeTail = !tailFrozen
-    const bodyEnd = excludeTail ? state.snake.length - 1 : state.snake.length
-    for (let i = 1; i < bodyEnd; i++) {
-      blocked.add(key(state.snake[i].x, state.snake[i].y))
-    }
-    for (const o of state.obstacles) blocked.add(key(o.x, o.y))
-
-    const hx = hp.x,
-      hy = hp.y
-    const fx = state.food.pos.x,
-      fy = state.food.pos.y
-    const tail = state.snake[state.snake.length - 1]
-
-    let bestDir: Direction = state.direction
-    let bestScore = -Infinity
-
-    for (const d of AI_DIRS) {
-      const dd = DIRECTION_MAP[d]
-      const nx = hx + dd.x,
-        ny = hy + dd.y
-
-      // Skip if out of bounds or blocked
-      if (!inB(nx, ny) || blocked.has(key(nx, ny))) continue
-
-      // Skip reverse direction
-      if (state.snake.length > 1 && nx === state.snake[1].x && ny === state.snake[1].y) continue
-
-      let score: number
-
-      if (nx === fx && ny === fy) {
-        // Eating food: snake grows, tail stays → blocked includes tail
-        const afterEat = new Set(blocked)
-        afterEat.add(key(nx, ny))
-        const space = floodCount(nx, ny, afterEat)
-        // Only eat if we have enough room
-        score = space > state.snake.length + 3 ? space * 100 + 5000 : -10000
-      } else {
-        // Normal move: tail gets freed
-        const afterMove = new Set(blocked)
-        afterMove.delete(key(tail.x, tail.y))
-        afterMove.add(key(nx, ny))
-        const space = floodCount(nx, ny, afterMove)
-        // Prefer more space, prefer closer to food
-        const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
-        score = space * 100 - dist
+  // ===== AI: Greedy Solver (reference: chuyangliu/snake) =====
+  function computeBestDir(): Direction | null {
+    const sn = state.snake
+    if (sn.length === 0) return 'right'
+    const hx = sn[0].x, hy = sn[0].y
+    const fx = state.food.pos.x, fy = state.food.pos.y
+    const G = GAME_CONFIG.gridSize
+    const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
+    const DIRS: Direction[] = ['up', 'right', 'down', 'left']
+    const occ = new Uint8Array(G * G)
+    const end = tailFrozen ? sn.length : sn.length - 1
+    for (let i = 1; i < end; i++) occ[sn[i].y * G + sn[i].x] = 1
+    for (const o of state.obstacles) occ[o.y * G + o.x] = 1
+    function bfs(sx: number, sy: number, tx: number, ty: number, o: Uint8Array): number[] | null {
+      if (sx === tx && sy === ty) return []
+      const N = G * G, vis = new Uint8Array(N), prev = new Int8Array(N).fill(-1)
+      const qx = new Int32Array(N), qy = new Int32Array(N)
+      let h = 0, t = 0
+      vis[sy * G + sx] = 1; qx[t] = sx; qy[t] = sy; t++
+      while (h < t) {
+        const cx = qx[h], cy = qy[h]; h++
+        if (cx === tx && cy === ty) {
+          const p: number[] = []
+          let px = tx, py = ty
+          while (px !== sx || py !== sy) { const pd = prev[py * G + px]; p.push(pd); px -= DX[pd]; py -= DY[pd] }
+          p.reverse(); return p
+        }
+        for (let di = 0; di < 4; di++) {
+          const nx = cx + DX[di], ny = cy + DY[di]
+          if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+          const idx = ny * G + nx
+          if (vis[idx] || o[idx]) continue
+          vis[idx] = 1; prev[idx] = di; qx[t] = nx; qy[t] = ny; t++
+        }
       }
-
-      if (score > bestScore) {
-        bestScore = score
-        bestDir = d
-      }
+      return null
     }
-
-    return bestDir
-  }
-
-  function aiTick() {
-    if (state.status !== 'playing') return
-    setDirection(findSafeDirection())
-  }
-
-  function startAI() {
-    stopAI()
-    aiEnabled.value = true
-    aiInterval = setInterval(aiTick, 30)
-  }
-
-  function stopAI() {
-    if (aiInterval) {
-      clearInterval(aiInterval)
-      aiInterval = null
+    const tx = sn[sn.length - 1].x, ty = sn[sn.length - 1].y
+    const fp = bfs(hx, hy, fx, fy, occ)
+    if (fp !== null) {
+      const vo = new Uint8Array(G * G)
+      for (let i = 1; i < sn.length; i++) vo[sn[i].y * G + sn[i].x] = 1
+      for (const o of state.obstacles) vo[o.y * G + o.x] = 1
+      let vhx = hx, vhy = hy
+      for (const di of fp) { vo[vhy * G + vhx] = 1; vhx += DX[di]; vhy += DY[di] }
+      vo[ty * G + tx] = 0
+      const esc = bfs(vhx, vhy, tx, ty, vo)
+      if (esc !== null) return DIRS[fp[0]]
     }
+    const o2 = new Uint8Array(occ)
+    o2[ty * G + tx] = 0
+    const tp = bfs(hx, hy, tx, ty, o2)
+    if (tp !== null && tp.length > 0) return DIRS[tp[0]]
+    let best: Direction = 'up', bd = -1
+    for (let di = 0; di < 4; di++) {
+      const nx = hx + DX[di], ny = hy + DY[di]
+      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+      if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
+      if (occ[ny * G + nx]) continue
+      const d = Math.abs(nx - fx) + Math.abs(ny - fy)
+      if (d > bd) { bd = d; best = DIRS[di] }
+    }
+    return best
   }
+  function gameTick() {
+    if (aiEnabled.value) {
+      const dir = computeBestDir()
+      if (dir) state.nextDirection = dir
+    }
+    moveSnake()
+  }
+  function toggleAI() { aiEnabled.value = !aiEnabled.value }
 
-  function toggleAI() {
-    aiEnabled.value = !aiEnabled.value
-    if (aiEnabled.value && state.status === 'playing') startAI()
-    else stopAI()
-  }
 
   function setSpeed(speed: number) {
     baseSpeed.value = speed
@@ -410,7 +392,6 @@ export function useGame() {
 
   onUnmounted(() => {
     clearTimers()
-    stopAI()
   })
 
   return {
