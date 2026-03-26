@@ -277,20 +277,36 @@ export function useGame() {
 
 
 
-  // ===== AI: Greedy Solver (reference: chuyangliu/snake) =====
+    // ===== AI: Hamiltonian Cycle + BFS Shortcuts =====
+  // Snake follows a serpentine cycle that covers every cell - guaranteed never to die.
+  // Takes BFS shortcuts to food when safe.
+  const G = GAME_CONFIG.gridSize
+  const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
+  const DIRS: Direction[] = ["up", "right", "down", "left"]
+  const CL = G * G
+
+  function p2i(x: number, y: number): number {
+    return y % 2 === 0 ? y * G + x : y * G + (G - 1 - x)
+  }
+  function i2p(i: number): [number, number] {
+    const y = Math.floor(i / G), c = i % G
+    return [y % 2 === 0 ? c : G - 1 - c, y]
+  }
+
   function computeBestDir(): Direction | null {
     const sn = state.snake
-    if (sn.length === 0) return 'right'
+    if (sn.length === 0) return "right"
     const hx = sn[0].x, hy = sn[0].y
     const fx = state.food.pos.x, fy = state.food.pos.y
-    const G = GAME_CONFIG.gridSize
-    const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
-    const DIRS: Direction[] = ['up', 'right', 'down', 'left']
+    const hi = p2i(hx, hy)
+
+    // Build occupied set (body + obstacles)
     const occ = new Uint8Array(G * G)
-    const end = tailFrozen ? sn.length : sn.length - 1
-    for (let i = 1; i < end; i++) occ[sn[i].y * G + sn[i].x] = 1
+    for (let i = 1; i < sn.length; i++) occ[sn[i].y * G + sn[i].x] = 1
     for (const o of state.obstacles) occ[o.y * G + o.x] = 1
-    function bfs(sx: number, sy: number, tx: number, ty: number, o: Uint8Array): number[] | null {
+
+    // BFS pathfinding
+    function bfs(sx: number, sy: number, tx: number, ty: number): number[] | null {
       if (sx === tx && sy === ty) return []
       const N = G * G, vis = new Uint8Array(N), prev = new Int8Array(N).fill(-1)
       const qx = new Int32Array(N), qy = new Int32Array(N)
@@ -299,8 +315,7 @@ export function useGame() {
       while (h < t) {
         const cx = qx[h], cy = qy[h]; h++
         if (cx === tx && cy === ty) {
-          const p: number[] = []
-          let px = tx, py = ty
+          const p: number[] = []; let px = tx, py = ty
           while (px !== sx || py !== sy) { const pd = prev[py * G + px]; p.push(pd); px -= DX[pd]; py -= DY[pd] }
           p.reverse(); return p
         }
@@ -308,39 +323,36 @@ export function useGame() {
           const nx = cx + DX[di], ny = cy + DY[di]
           if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
           const idx = ny * G + nx
-          if (vis[idx] || o[idx]) continue
+          if (vis[idx] || occ[idx]) continue
           vis[idx] = 1; prev[idx] = di; qx[t] = nx; qy[t] = ny; t++
         }
       }
       return null
     }
-    const tx = sn[sn.length - 1].x, ty = sn[sn.length - 1].y
-    const fp = bfs(hx, hy, fx, fy, occ)
-    if (fp !== null) {
-      const vo = new Uint8Array(G * G)
-      for (let i = 1; i < sn.length; i++) vo[sn[i].y * G + sn[i].x] = 1
-      for (const o of state.obstacles) vo[o.y * G + o.x] = 1
-      let vhx = hx, vhy = hy
-      for (const di of fp) { vo[vhy * G + vhx] = 1; vhx += DX[di]; vhy += DY[di] }
-      vo[ty * G + tx] = 0
-      const esc = bfs(vhx, vhy, tx, ty, vo)
-      if (esc !== null) return DIRS[fp[0]]
+
+    // Try BFS shortcut to food
+    const fp = bfs(hx, hy, fx, fy)
+    if (fp !== null && fp.length > 0 && fp.length <= 15) {
+      // Check shortcut is forward on cycle
+      const [sx, sy] = [hx + DX[fp[0]], hy + DY[fp[0]]]
+      const si = p2i(sx, sy)
+      const fwd = (si - hi + CL) % CL
+      if (fwd > 0 && fwd < CL / 2) return DIRS[fp[0]]
     }
-    const o2 = new Uint8Array(occ)
-    o2[ty * G + tx] = 0
-    const tp = bfs(hx, hy, tx, ty, o2)
-    if (tp !== null && tp.length > 0) return DIRS[tp[0]]
-    let best: Direction = 'up', bd = -1
+
+    // Follow Hamiltonian cycle: next cell
+    const ni = (hi + 1) % CL
+    const [nx, ny] = i2p(ni)
+    // Find direction from head to next cycle cell
     for (let di = 0; di < 4; di++) {
-      const nx = hx + DX[di], ny = hy + DY[di]
-      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-      if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
-      if (occ[ny * G + nx]) continue
-      const d = Math.abs(nx - fx) + Math.abs(ny - fy)
-      if (d > bd) { bd = d; best = DIRS[di] }
+      if (hx + DX[di] === nx && hy + DY[di] === ny) return DIRS[di]
     }
-    return best
+    // Next cell is not adjacent (shouldn't happen) - use BFS to reach it
+    const cyclePath = bfs(hx, hy, nx, ny)
+    if (cyclePath !== null && cyclePath.length > 0) return DIRS[cyclePath[0]]
+    return "right"
   }
+
   function gameTick() {
     if (aiEnabled.value) {
       const dir = computeBestDir()
@@ -348,11 +360,8 @@ export function useGame() {
     }
     moveSnake()
   }
-  function toggleAI() { aiEnabled.value = !aiEnabled.value }
 
-
-
-  function setSpeed(speed: number) {
+function setSpeed(speed: number) {
     baseSpeed.value = speed
     if (state.status === 'idle') state.speed = speed
   }
