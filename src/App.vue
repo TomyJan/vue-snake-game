@@ -5,7 +5,11 @@
     </header>
 
     <main class="main">
-      <ScoreBoard :score="state.score" :high-score="state.highScore" :length="snakeLength" />
+      <ScoreBoard
+        :score="state.score"
+        :high-score="state.highScore"
+        :length="snakeLength"
+      />
 
       <div class="board-wrapper">
         <GameBoard
@@ -36,16 +40,17 @@
         @set-speed="onSetSpeed"
       />
 
-      <MobileControls :game-status="state.status" @direction="onDirection" />
+      <MobileControls @direction="onDirection" />
 
       <p class="hint" v-if="state.status === 'idle'">
         Press <kbd>Space</kbd> or <kbd>↑↓←→</kbd> to start
       </p>
-      <p class="hint" v-else-if="state.status === 'starting'">Get ready...</p>
+      <p class="hint" v-else-if="state.status === 'starting'">
+        Get ready...
+      </p>
       <p class="hint" v-else-if="state.status === 'playing'">
         <kbd>Space</kbd> pause · <kbd>R</kbd> restart · <kbd>Q</kbd> quit
       </p>
-      <Leaderboard ref="leaderboardRef" />
     </main>
 
     <footer class="controls-help">
@@ -74,15 +79,12 @@ import GameBoard from './components/GameBoard.vue'
 import ScoreBoard from './components/ScoreBoard.vue'
 import GameControls from './components/GameControls.vue'
 import MobileControls from './components/MobileControls.vue'
-import Leaderboard from './components/Leaderboard.vue'
 import { useGame } from './composables/useGame'
 import { useTheme } from './composables/useTheme'
 import { useSound } from './composables/useSound'
-import { getToken, submitScore } from './services/github'
 import type { Direction } from './types/game'
 
 const appRef = ref<HTMLElement | null>(null)
-const leaderboardRef = ref<InstanceType<typeof Leaderboard> | null>(null)
 const {
   state,
   startGame,
@@ -105,19 +107,17 @@ const version = __APP_VERSION__
 const commitShort = __APP_COMMIT__
 const commitUrl = `https://github.com/TomyJan/vue-snake-game/commit/${__APP_COMMIT__}`
 
-const isNewHighScore = computed(
-  () => state.status === 'gameover' && state.score > 0 && state.score >= state.highScore,
+const isNewHighScore = computed(() =>
+  state.status === 'gameover' && state.score > 0 && state.score >= state.highScore
 )
 
 function onStart() {
   playStart()
-  scoreSubmitted = false
   startGame()
 }
 
 function onRestart() {
   playStart()
-  scoreSubmitted = false
   startGame()
 }
 
@@ -126,32 +126,19 @@ function onEndGame() {
 }
 
 // Lock body scroll during active gameplay
-watch(
-  () => state.status,
-  (s) => {
-    if (s === 'playing' || s === 'starting') {
-      document.body.classList.add('game-active')
-    } else {
-      document.body.classList.remove('game-active')
-    }
-  },
-)
+watch(() => state.status, (s) => {
+  if (s === 'playing' || s === 'starting') {
+    document.body.classList.add('game-active')
+  } else {
+    document.body.classList.remove('game-active')
+  }
+})
 
-function onTogglePause() {
-  togglePause()
-}
-function onToggleSound() {
-  toggleSound()
-}
-function onToggleTheme() {
-  toggleTheme()
-}
-function onToggleAI() {
-  toggleAI()
-}
-function onSetSpeed(speed: number) {
-  setSpeed(speed)
-}
+function onTogglePause() { togglePause() }
+function onToggleSound() { toggleSound() }
+function onToggleTheme() { toggleTheme() }
+function onToggleAI() { toggleAI() }
+function onSetSpeed(speed: number) { setSpeed(speed) }
 
 function onDirection(dir: Direction) {
   if (state.status === 'idle' || state.status === 'starting') {
@@ -164,12 +151,9 @@ function onDirection(dir: Direction) {
 // Sound events
 let prevLength = 3
 let prevStatus = 'idle'
-let scoreSubmitted = false
 
 onMounted(() => {
-  nextTick(() => {
-    appRef.value?.focus()
-  })
+  nextTick(() => { appRef.value?.focus() })
 
   setInterval(() => {
     if (state.snake.length > prevLength) {
@@ -180,16 +164,6 @@ onMounted(() => {
     }
     if (state.status === 'gameover' && prevStatus === 'playing') {
       playHit()
-      // Auto-submit score if logged in
-      if (!scoreSubmitted) {
-        scoreSubmitted = true
-        const token = getToken()
-        if (token && state.score > 0) {
-          submitScore(token, state.score, state.snake.length)
-            .then(() => leaderboardRef.value?.refreshLeaderboard())
-            .catch(() => {})
-        }
-      }
     }
     prevStatus = state.status
   }, 50)
