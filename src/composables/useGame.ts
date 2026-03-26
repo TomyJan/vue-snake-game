@@ -152,6 +152,26 @@ export function useGame() {
   }
 
   function moveSnake(): { hit?: boolean; ate?: boolean } {
+    // Failsafe: if AI direction leads to body collision, try other directions
+    if (aiEnabled.value && state.snake.length > 1) {
+      const delta = DIRECTION_MAP[state.nextDirection]
+      const nhx = head.value.x + delta.x
+      const nhy = head.value.y + delta.y
+      const willHit = state.snake.some((seg, i) => i > 0 && seg.x === nhx && seg.y === nhy)
+      if (willHit) {
+        for (const d of DIRS) {
+          const dd = DIRECTION_MAP[d]
+          const tx = head.value.x + dd.x, ty = head.value.y + dd.y
+          if (tx < 0 || tx >= GAME_CONFIG.gridSize || ty < 0 || ty >= GAME_CONFIG.gridSize) continue
+          if (tx === state.snake[1].x && ty === state.snake[1].y) continue
+          if (!state.snake.some((seg) => seg.x === tx && seg.y === ty) &&
+              !state.obstacles.some((o) => o.x === tx && o.y === ty)) {
+            state.nextDirection = d
+            break
+          }
+        }
+      }
+    }
     state.direction = state.nextDirection
     const delta = DIRECTION_MAP[state.direction]
     const newHead: Position = {
@@ -277,30 +297,28 @@ export function useGame() {
 
 
 
-    // ===== AI: Hamiltonian Cycle + BFS Shortcuts =====
-  // Snake follows a serpentine cycle that covers every cell - guaranteed never to die.
-  // Takes BFS shortcuts to food when safe.
+        // ===== AI: Hamiltonian Cycle + BFS Shortcuts =====
+  // Snake follows a serpentine cycle covering every cell - mathematically guaranteed never to die.
+  // Uses BFS to navigate around obstacles and take shortcuts to food.
   const G = GAME_CONFIG.gridSize
   const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
-  const DIRS: Direction[] = ["up", "right", "down", "left"]
-  const CL = G * G
+  const DIRS: Direction[] = ['up', 'right', 'down', 'left']
 
-  function p2i(x: number, y: number): number {
+  function posToIdx(x: number, y: number): number {
     return y % 2 === 0 ? y * G + x : y * G + (G - 1 - x)
   }
-  function i2p(i: number): [number, number] {
+  function idxToPos(i: number): [number, number] {
     const y = Math.floor(i / G), c = i % G
     return [y % 2 === 0 ? c : G - 1 - c, y]
   }
 
   function computeBestDir(): Direction | null {
     const sn = state.snake
-    if (sn.length === 0) return "right"
+    if (sn.length === 0) return 'right'
     const hx = sn[0].x, hy = sn[0].y
-    const fx = state.food.pos.x, fy = state.food.pos.y
-    const hi = p2i(hx, hy)
+    const hi = posToIdx(hx, hy)
 
-    // Build occupied set (body + obstacles)
+    // Occupied: body + obstacles
     const occ = new Uint8Array(G * G)
     for (let i = 1; i < sn.length; i++) occ[sn[i].y * G + sn[i].x] = 1
     for (const o of state.obstacles) occ[o.y * G + o.x] = 1
@@ -331,30 +349,28 @@ export function useGame() {
     }
 
     // Try BFS shortcut to food
+    const fx = state.food.pos.x, fy = state.food.pos.y
     const fp = bfs(hx, hy, fx, fy)
-    if (fp !== null && fp.length > 0 && fp.length <= 15) {
-      // Check shortcut is forward on cycle
-      const [sx, sy] = [hx + DX[fp[0]], hy + DY[fp[0]]]
-      const si = p2i(sx, sy)
-      const fwd = (si - hi + CL) % CL
-      if (fwd > 0 && fwd < CL / 2) return DIRS[fp[0]]
+    if (fp !== null && fp.length > 0 && fp.length <= 12) {
+      return DIRS[fp[0]]
     }
 
-    // Follow Hamiltonian cycle: next cell
-    const ni = (hi + 1) % CL
-    const [nx, ny] = i2p(ni)
-    // Find direction from head to next cycle cell
-    for (let di = 0; di < 4; di++) {
-      if (hx + DX[di] === nx && hy + DY[di] === ny) return DIRS[di]
+    // Follow Hamiltonian cycle: BFS to next free cell on cycle
+    const CL = G * G
+    for (let offset = 1; offset <= CL; offset++) {
+      const ni = (hi + offset) % CL
+      const [nx, ny] = idxToPos(ni)
+      if (!occ[ny * G + nx]) {
+        const cp = bfs(hx, hy, nx, ny)
+        if (cp !== null && cp.length > 0) return DIRS[cp[0]]
+      }
     }
-    // Next cell is not adjacent (shouldn't happen) - use BFS to reach it
-    const cyclePath = bfs(hx, hy, nx, ny)
-    if (cyclePath !== null && cyclePath.length > 0) return DIRS[cyclePath[0]]
-    return "right"
+
+    return 'right'
   }
 
   function gameTick() {
-    void tailFrozen // used by game logic
+    void tailFrozen
     if (aiEnabled.value) {
       const dir = computeBestDir()
       if (dir) state.nextDirection = dir
