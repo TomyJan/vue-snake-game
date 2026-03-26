@@ -157,10 +157,16 @@ export function useGame() {
       const delta = DIRECTION_MAP[state.nextDirection]
       const nhx = head.value.x + delta.x
       const nhy = head.value.y + delta.y
+      const tailIdx = state.snake.length - 1
       const willHitBody = state.snake.some(
-        (seg, i) => i > 0 && seg.x === nhx && seg.y === nhy,
+        (seg, i) => i > 0 && i < tailIdx && seg.x === nhx && seg.y === nhy,
       )
-      if (willHitBody) {
+      // Also check tail if frozen (tail stays after eating)
+      const willHitTail =
+        tailFrozen &&
+        state.snake[tailIdx].x === nhx &&
+        state.snake[tailIdx].y === nhy
+      if (willHitBody || willHitTail) {
         // Try all directions to find a safe one
         for (const d of DIRS) {
           const dd = DIRECTION_MAP[d]
@@ -169,9 +175,15 @@ export function useGame() {
           if (tx < 0 || tx >= GAME_CONFIG.gridSize || ty < 0 || ty >= GAME_CONFIG.gridSize)
             continue
           if (tx === state.snake[1].x && ty === state.snake[1].y) continue
-          const hitSeg = state.snake.some((seg) => seg.x === tx && seg.y === ty)
+          const hitSeg = state.snake.some(
+            (seg, i) => i > 0 && i < tailIdx && seg.x === tx && seg.y === ty,
+          )
+          const hitTail =
+            tailFrozen &&
+            state.snake[tailIdx].x === tx &&
+            state.snake[tailIdx].y === ty
           const hitObs = state.obstacles.some((o) => o.x === tx && o.y === ty)
-          if (!hitSeg && !hitObs) {
+          if (!hitSeg && !hitTail && !hitObs) {
             state.nextDirection = d
             break
           }
