@@ -306,6 +306,8 @@ export function useGame() {
       }
 
       // Safety check: can head reach tail after this move?
+      // Exclude tail from occupied for pathfinding (it's the target)
+      simOcc[ty * G + tx] = 0
       const safe = canReach(nx, ny, tx, ty, simOcc)
 
       if (safe) {
