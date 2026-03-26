@@ -246,87 +246,72 @@ export function useGame() {
   }
 
   // ===== AI =====
-  const AI_DIRS: Direction[] = ['up', 'right', 'down', 'left']
-  const G = GAME_CONFIG.gridSize
-
-  function key(x: number, y: number): string { return `${x},${y}` }
-  function inB(x: number, y: number): boolean { return x >= 0 && x < G && y >= 0 && y < G }
-
-  function floodCount(sx: number, sy: number, blocked: Set<string>): number {
-    const vis = new Set<string>()
-    const qx: number[] = [sx]
-    const qy: number[] = [sy]
-    vis.add(key(sx, sy))
-    let head2 = 0
-    while (head2 < qx.length) {
-      const cx = qx[head2], cy = qy[head2]; head2++
-      for (const d of AI_DIRS) {
-        const dd = DIRECTION_MAP[d]
-        const nx = cx + dd.x, ny = cy + dd.y
-        const k = key(nx, ny)
-        if (!inB(nx, ny) || blocked.has(k) || vis.has(k)) continue
-        vis.add(k)
-        qx.push(nx)
-        qy.push(ny)
-      }
-    }
-    return vis.size
-  }
 
   function findSafeDirection(): Direction {
-    const hp = head.value
-    if (!hp) return 'right'
-
-    // Build blocked set: body + obstacles
-    // After eating (tailFrozen), tail is still part of body → include it
-    const blocked = new Set<string>()
-    const excludeTail = !tailFrozen
-    const bodyEnd = excludeTail ? state.snake.length - 1 : state.snake.length
-    for (let i = 0; i < bodyEnd; i++) {
-      blocked.add(key(state.snake[i].x, state.snake[i].y))
-    }
-    for (const o of state.obstacles) blocked.add(key(o.x, o.y))
-
-    const hx = hp.x, hy = hp.y
+    const sn = state.snake
+    if (sn.length === 0) return 'right'
+    const G = GAME_CONFIG.gridSize
+    const hx = sn[0].x, hy = sn[0].y
     const fx = state.food.pos.x, fy = state.food.pos.y
-    const tail = state.snake[state.snake.length - 1]
+    const tx = sn[sn.length - 1].x, ty = sn[sn.length - 1].y
+    const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
+    const dirs: Direction[] = ['up', 'right', 'down', 'left']
+
+    // Build occupied grid: body (skip head at [0]) + obstacles
+    const occ = new Uint8Array(G * G)
+    const bodyEnd = tailFrozen ? sn.length : sn.length - 1
+    for (let i = 1; i < bodyEnd; i++) occ[sn[i].y * G + sn[i].x] = 1
+    for (const o of state.obstacles) occ[o.y * G + o.x] = 1
+
+    // BFS: can (sx,sy) reach (tx,ty) avoiding occupied cells?
+    function canReach(sx: number, sy: number, txx: number, tyy: number, o: Uint8Array): boolean {
+      if (sx === txx && sy === tyy) return true
+      const vis = new Uint8Array(G * G)
+      const qx = new Int32Array(G * G), qy = new Int32Array(G * G)
+      let h = 0, t = 0
+      vis[sy * G + sx] = 1; qx[t] = sx; qy[t] = sy; t++
+      while (h < t) {
+        const cx = qx[h], cy = qy[h]; h++
+        for (let di = 0; di < 4; di++) {
+          const nx = cx + DX[di], ny = cy + DY[di]
+          if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+          const idx = ny * G + nx
+          if (vis[idx] || o[idx]) continue
+          if (nx === txx && ny === tyy) return true
+          vis[idx] = 1; qx[t] = nx; qy[t] = ny; t++
+        }
+      }
+      return false
+    }
 
     let bestDir: Direction = state.direction
     let bestScore = -Infinity
 
-    for (const d of AI_DIRS) {
-      const dd = DIRECTION_MAP[d]
-      const nx = hx + dd.x, ny = hy + dd.y
+    for (let di = 0; di < 4; di++) {
+      const nx = hx + DX[di], ny = hy + DY[di]
+      // Skip walls
+      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+      // Skip reverse (into neck)
+      if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
+      // Skip body/obstacle
+      if (occ[ny * G + nx]) continue
 
-      // Skip if out of bounds or blocked
-      if (!inB(nx, ny) || blocked.has(key(nx, ny))) continue
+      const eats = nx === fx && ny === fy
 
-      // Skip reverse direction
-      if (state.snake.length > 1 && nx === state.snake[1].x && ny === state.snake[1].y) continue
-
-      let score: number
-
-      if (nx === fx && ny === fy) {
-        // Eating food: snake grows, tail stays → blocked includes tail
-        const afterEat = new Set(blocked)
-        afterEat.add(key(nx, ny))
-        const space = floodCount(nx, ny, afterEat)
-        // Only eat if we have enough room
-        score = space > state.snake.length + 3 ? space * 100 + 5000 : -10000
-      } else {
-        // Normal move: tail gets freed
-        const afterMove = new Set(blocked)
-        afterMove.delete(key(tail.x, tail.y))
-        afterMove.add(key(nx, ny))
-        const space = floodCount(nx, ny, afterMove)
-        // Prefer more space, prefer closer to food
-        const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
-        score = space * 100 - dist
+      // Simulate move: add new head, handle tail
+      const simOcc = new Uint8Array(occ)
+      simOcc[ny * G + nx] = 1 // new head
+      if (!eats && sn.length > 1) {
+        simOcc[sn[sn.length - 1].y * G + sn[sn.length - 1].x] = 0 // tail moves away
       }
 
-      if (score > bestScore) {
-        bestScore = score
-        bestDir = d
+      // Safety check: can head reach tail after this move?
+      const safe = canReach(nx, ny, tx, ty, simOcc)
+
+      if (safe) {
+        const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
+        const score = eats ? 1000000 - dist : 10000 - dist
+        if (score > bestScore) { bestScore = score; bestDir = dirs[di] }
       }
     }
 
