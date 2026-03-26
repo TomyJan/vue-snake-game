@@ -84,7 +84,6 @@ export function useGame() {
     if (state.status === 'paused') {
       state.status = 'playing'
       startGameTimer()
-      if (aiEnabled.value) startAI()
     }
   }
 
@@ -200,7 +199,10 @@ export function useGame() {
 
   function startGameTimer() {
     stopGameTimer()
-    gameTimer = setInterval(() => { moveSnake() }, state.speed)
+    gameTimer = setInterval(() => {
+      if (aiEnabled.value) { const dir = findSafeDirection(); if (dir) state.nextDirection = dir }
+      moveSnake()
+    }, state.speed)
   }
 
   function stopGameTimer() {
@@ -331,13 +333,6 @@ export function useGame() {
     return bestDir
   }
 
-  function aiTick() {
-    if (state.status !== 'playing') return
-    setDirection(findSafeDirection())
-  }
-
-
-  }
 
   function toggleAI() { aiEnabled.value = !aiEnabled.value }
 
@@ -346,7 +341,7 @@ export function useGame() {
     if (state.status === 'idle') state.speed = speed
   }
 
-  onUnmounted(() => { clearTimers(); stopAI() })
+  onUnmounted(() => { clearTimers() })
 
   return {
     state, head, length, aiEnabled, baseSpeed,
