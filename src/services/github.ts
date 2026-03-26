@@ -60,11 +60,7 @@ export async function getUser(token: string): Promise<GitHubUser> {
 }
 
 /** Submit a score as a comment on Issue #1 */
-export async function submitScore(
-  token: string,
-  score: number,
-  length: number,
-): Promise<void> {
+export async function submitScore(token: string, score: number, length: number): Promise<void> {
   const user = await getUser(token)
   const entry: LeaderboardEntry = {
     login: user.login,
@@ -74,19 +70,16 @@ export async function submitScore(
     date: new Date().toISOString(),
   }
 
-  const res = await fetch(
-    `${GITHUB_API}/repos/${OWNER}/${REPO}/issues/${ISSUE_NUMBER}/comments`,
-    {
-      method: 'POST',
-      headers: {
-        ...headers(token),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        body: `<!-- snake-score -->\n\`\`\`json\n${JSON.stringify(entry)}\n\`\`\``,
-      }),
+  const res = await fetch(`${GITHUB_API}/repos/${OWNER}/${REPO}/issues/${ISSUE_NUMBER}/comments`, {
+    method: 'POST',
+    headers: {
+      ...headers(token),
+      'Content-Type': 'application/json',
     },
-  )
+    body: JSON.stringify({
+      body: `<!-- snake-score -->\n\`\`\`json\n${JSON.stringify(entry)}\n\`\`\``,
+    }),
+  })
   if (!res.ok) throw new Error(`Submit failed: ${res.status}`)
 }
 
