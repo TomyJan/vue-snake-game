@@ -301,17 +301,23 @@ export function useGame() {
   const G = GAME_CONFIG.gridSize
   const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
   const DIRS: Direction[] = ["up", "right", "down", "left"]
-  const CL = G * G
-  function p2i(x: number, y: number): number { return y % 2 === 0 ? y * G + x : y * G + (G - 1 - x) }
-  function i2p(i: number): [number, number] { const y = Math.floor(i / G), c = i % G; return [y % 2 === 0 ? c : G - 1 - c, y] }
   function computeBestDir(): Direction | null {
     const sn = state.snake
     if (sn.length === 0) return "right"
-    const hx = sn[0].x, hy = sn[0].y, hi = p2i(hx, hy)
+    if (sn.length === 1) {
+      const f = state.food.pos
+      if (f.x > sn[0].x) return "right"
+      if (f.x < sn[0].x) return "left"
+      if (f.y > sn[0].y) return "down"
+      return "up"
+    }
+    const hx = sn[0].x, hy = sn[0].y
+    const fx = state.food.pos.x, fy = state.food.pos.y
+    const tx = sn[sn.length - 1].x, ty = sn[sn.length - 1].y
     const occ = new Uint8Array(G * G)
     for (let i = 1; i < sn.length; i++) occ[sn[i].y * G + sn[i].x] = 1
     for (const o of state.obstacles) occ[o.y * G + o.x] = 1
-    function bfs(sx: number, sy: number, txx: number, tyy: number): number[] | null {
+    function bfs(sx: number, sy: number, txx: number, tyy: number, o: Uint8Array): number[] | null {
       if (sx === txx && sy === tyy) return []
       const N = G * G, vis = new Uint8Array(N), pr = new Int8Array(N).fill(-1)
       const qx = new Int32Array(N), qy = new Int32Array(N)
@@ -322,18 +328,46 @@ export function useGame() {
           p.reverse(); return p }
         for (let di = 0; di < 4; di++) { const nx = cx + DX[di], ny = cy + DY[di]
           if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-          const idx = ny * G + nx; if (vis[idx] || occ[idx]) continue
+          const idx = ny * G + nx; if (vis[idx] || o[idx]) continue
           vis[idx] = 1; pr[idx] = di; qx[t] = nx; qy[t] = ny; t++ } }
       return null }
-    const fx = state.food.pos.x, fy = state.food.pos.y
-    const mDist = Math.abs(hx - fx) + Math.abs(hy - fy)
-    if (mDist <= 8) { const fp = bfs(hx, hy, fx, fy)
-      if (fp !== null && fp.length > 0 && fp.length <= 10) return DIRS[fp[0]] }
-    for (let o = 1; o <= CL; o++) { const ni = (hi + o) % CL; const [nx, ny] = i2p(ni)
-      if (!occ[ny * G + nx] && !(nx === hx && ny === hy)) {
-        const cp = bfs(hx, hy, nx, ny)
-        if (cp !== null && cp.length > 0) return DIRS[cp[0]] } }
-    return "right" }
+    // Step 1: BFS to food, simulate eating, check head can reach tail
+    const fp = bfs(hx, hy, fx, fy, occ)
+    if (fp !== null && fp.length > 0) {
+      const vo = new Uint8Array(G * G)
+      for (let i = 1; i < sn.length; i++) vo[sn[i].y * G + sn[i].x] = 1
+      for (const o of state.obstacles) vo[o.y * G + o.x] = 1
+      let vhx = hx, vhy = hy
+      for (const di of fp) { vo[vhy * G + vhx] = 1; vhx += DX[di]; vhy += DY[di] }
+      vo[ty * G + tx] = 0
+      const esc = bfs(vhx, vhy, tx, ty, vo)
+      if (esc !== null) return DIRS[fp[0]]
+    }
+    // Step 2: pick direction where head can still reach tail after moving
+    let best: Direction | null = null, bs = -1, bd = 1e9
+    for (let di = 0; di < 4; di++) {
+      const nx = hx + DX[di], ny = hy + DY[di]
+      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+      if (nx === sn[1].x && ny === sn[1].y) continue
+      if (occ[ny * G + nx]) continue
+      const simO = new Uint8Array(occ); simO[ny * G + nx] = 1; simO[ty * G + tx] = 0
+      // Critical: check head can reach tail after this move
+      const reachable = bfs(nx, ny, tx, ty, simO)
+      if (reachable === null) continue
+      // Count space for scoring
+      const vis2 = new Uint8Array(G * G), qx2 = new Int32Array(G * G), qy2 = new Int32Array(G * G)
+      let h2 = 0, t2 = 0; vis2[ny * G + nx] = 1; qx2[t2] = nx; qy2[t2] = ny; t2++
+      let cnt = 1
+      while (h2 < t2) { const cx = qx2[h2], cy = qy2[h2]; h2++
+        for (let d = 0; d < 4; d++) { const nnx = cx + DX[d], nny = cy + DY[d]
+          if (nnx < 0 || nnx >= G || nny < 0 || nny >= G) continue
+          const idx = nny * G + nnx; if (vis2[idx] || simO[idx]) continue
+          vis2[idx] = 1; qx2[t2] = nnx; qy2[t2] = nny; t2++; cnt++ } }
+      const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
+        if (cnt > bs || (cnt === bs && dist < bd)) { bs = cnt; bd = dist; best = DIRS[di] }
+    }
+    return best
+  }
   function gameTick() { void tailFrozen
     if (aiEnabled.value) { const dir = computeBestDir(); if (dir) state.nextDirection = dir }
     moveSnake() }
