@@ -366,7 +366,15 @@ export function useGame() {
       const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
         if (cnt > bs || (cnt === bs && dist < bd)) { bs = cnt; bd = dist; best = DIRS[di] }
     }
-    return best
+    if (best !== null) return best
+    // Step 3: no safe direction found, pick any valid direction to avoid wall
+    for (let di = 0; di < 4; di++) {
+      const nx = hx + DX[di], ny = hy + DY[di]
+      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+      if (nx === sn[1].x && ny === sn[1].y) continue
+      if (!occ[ny * G + nx]) return DIRS[di]
+    }
+    return null
   }
   function gameTick() { void tailFrozen
     if (aiEnabled.value) { const dir = computeBestDir(); if (dir) state.nextDirection = dir }
