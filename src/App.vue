@@ -45,6 +45,7 @@
       <p class="hint" v-else-if="state.status === 'playing'">
         <kbd>Space</kbd> pause · <kbd>R</kbd> restart · <kbd>Q</kbd> quit
       </p>
+      <Leaderboard ref="leaderboardRef" />
     </main>
 
     <footer class="controls-help">
@@ -73,12 +74,15 @@ import GameBoard from './components/GameBoard.vue'
 import ScoreBoard from './components/ScoreBoard.vue'
 import GameControls from './components/GameControls.vue'
 import MobileControls from './components/MobileControls.vue'
+import Leaderboard from './components/Leaderboard.vue'
 import { useGame } from './composables/useGame'
 import { useTheme } from './composables/useTheme'
 import { useSound } from './composables/useSound'
+import { getToken, submitScore } from './services/github'
 import type { Direction } from './types/game'
 
 const appRef = ref<HTMLElement | null>(null)
+const leaderboardRef = ref<InstanceType<typeof Leaderboard> | null>(null)
 const {
   state,
   startGame,
@@ -107,11 +111,13 @@ const isNewHighScore = computed(
 
 function onStart() {
   playStart()
+  scoreSubmitted = false
   startGame()
 }
 
 function onRestart() {
   playStart()
+  scoreSubmitted = false
   startGame()
 }
 
@@ -158,6 +164,7 @@ function onDirection(dir: Direction) {
 // Sound events
 let prevLength = 3
 let prevStatus = 'idle'
+let scoreSubmitted = false
 
 onMounted(() => {
   nextTick(() => {
@@ -173,6 +180,16 @@ onMounted(() => {
     }
     if (state.status === 'gameover' && prevStatus === 'playing') {
       playHit()
+      // Auto-submit score if logged in
+      if (!scoreSubmitted) {
+        scoreSubmitted = true
+        const token = getToken()
+        if (token && state.score > 0) {
+          submitScore(token, state.score, state.snake.length)
+            .then(() => leaderboardRef.value?.refreshLeaderboard())
+            .catch(() => {})
+        }
+      }
     }
     prevStatus = state.status
   }, 50)
