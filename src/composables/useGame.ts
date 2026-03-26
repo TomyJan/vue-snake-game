@@ -281,247 +281,106 @@ export function useGame() {
     }
   }
 
-  // ===== AI =====
+  // ===== AI: Simple greedy BFS =====
+  // Each tick: evaluate all 4 directions, pick the one with maximum
+  // reachable space (BFS flood fill). Use food distance as tiebreaker.
   const DIRS: Direction[] = ['up', 'right', 'down', 'left']
   const G = GAME_CONFIG.gridSize
+  const P = (x: number, y: number) => y * G + x // fast position key
 
-  function k(x: number, y: number): string {
-    return `${x},${y}`
-  }
-  function inB(x: number, y: number): boolean {
-    return x >= 0 && x < G && y >= 0 && y < G
-  }
-
-  // Build a Set of occupied positions for the snake
-  // excludeTail: if true, the tail position is NOT included (snake will move away)
-  function buildBlocked(includeTail: boolean): Set<string> {
-    const s = new Set<string>()
-    const end = includeTail ? state.snake.length : state.snake.length - 1
-    for (let i = 1; i < end; i++) {
-      s.add(k(state.snake[i].x, state.snake[i].y))
-    }
-    for (const o of state.obstacles) s.add(k(o.x, o.y))
-    return s
-  }
-
-  // BFS: find shortest path from (sx,sy) to (tx,ty) avoiding blocked cells
-  // Returns the path as an array of [x,y] (excluding start), or null if no path
-  function bfsPath(
-    sx: number,
-    sy: number,
-    tx: number,
-    ty: number,
-    blocked: Set<string>,
-  ): [number, number][] | null {
-    const vis = new Set<string>()
-    const qx: number[] = [sx]
-    const qy: number[] = [sy]
-    const prevX = new Map<string, number>()
-    const prevY = new Map<string, number>()
-    vis.add(k(sx, sy))
-
-    let head2 = 0
-    while (head2 < qx.length) {
-      const cx = qx[head2],
-        cy = qy[head2]
-      head2++
-      if (cx === tx && cy === ty) {
-        // Reconstruct path
-        const path: [number, number][] = []
-        let px = tx,
-          py = ty
-        while (px !== sx || py !== sy) {
-          path.push([px, py])
-          const pk = k(px, py)
-          px = prevX.get(pk)!
-          py = prevY.get(pk)!
-        }
-        path.reverse()
-        return path
-      }
+  // BFS count of reachable cells from (sx, sy)
+  function bfsCount(sx: number, sy: number, occupied: Set<number>): number {
+    const total = G * G
+    const visited = new Uint8Array(total)
+    const queue = new Int32Array(total)
+    let head = 0,
+      tail = 0
+    const start = P(sx, sy)
+    visited[start] = 1
+    queue[tail++] = start
+    let count = 1
+    while (head < tail) {
+      const pos = queue[head++]
+      const cx = pos % G,
+        cy = (pos - cx) / G
       for (const d of DIRS) {
         const dd = DIRECTION_MAP[d]
         const nx = cx + dd.x,
           ny = cy + dd.y
-        const nk = k(nx, ny)
-        if (!inB(nx, ny) || blocked.has(nk) || vis.has(nk)) continue
-        vis.add(nk)
-        prevX.set(nk, cx)
-        prevY.set(nk, cy)
-        qx.push(nx)
-        qy.push(ny)
+        if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+        const np = P(nx, ny)
+        if (visited[np] || occupied.has(np)) continue
+        visited[np] = 1
+        queue[tail++] = np
+        count++
       }
     }
-    return null
-  }
-
-  // BFS: count reachable cells from (sx,sy)
-  function floodCount(sx: number, sy: number, blocked: Set<string>): number {
-    const vis = new Set<string>()
-    const qx: number[] = [sx]
-    const qy: number[] = [sy]
-    vis.add(k(sx, sy))
-    let head2 = 0
-    while (head2 < qx.length) {
-      const cx = qx[head2],
-        cy = qy[head2]
-      head2++
-      for (const d of DIRS) {
-        const dd = DIRECTION_MAP[d]
-        const nx = cx + dd.x,
-          ny = cy + dd.y
-        const nk = k(nx, ny)
-        if (!inB(nx, ny) || blocked.has(nk) || vis.has(nk)) continue
-        vis.add(nk)
-        qx.push(nx)
-        qy.push(ny)
-      }
-    }
-    return vis.size
-  }
-
-  // Check if snake can survive after taking a step to (nx, ny)
-  // Returns true if there's enough space
-  function canSurvive(nx: number, ny: number, eating: boolean): boolean {
-    const blocked = eating ? buildBlocked(true) : buildBlocked(false)
-    blocked.add(k(nx, ny))
-
-    let space: number
-    if (eating) {
-      space = floodCount(nx, ny, blocked)
-      // After eating, snake is longer by 1, need at least snake.length + 1 space
-      return space >= state.snake.length + 1
-    } else {
-      const tail = state.snake[state.snake.length - 1]
-      blocked.delete(k(tail.x, tail.y))
-      space = floodCount(nx, ny, blocked)
-      // Snake doesn't grow, need at least current length space
-      return space >= state.snake.length
-    }
+    return count
   }
 
   function computeBestDirection(): Direction | null {
-    const hp = head.value
-    if (!hp || state.snake.length === 0) return null
+    const sn = state.snake
+    if (sn.length === 0) return null
 
-    const hx = hp.x,
-      hy = hp.y
+    const hx = sn[0].x,
+      hy = sn[0].y
     const fx = state.food.pos.x,
       fy = state.food.pos.y
-    const tail = state.snake[state.snake.length - 1]
 
-    // Get valid adjacent positions (no walls, no body, no reverse)
-    const candidates: { dir: Direction; x: number; y: number }[] = []
+    // Build occupied set: body segments + obstacles
+    // Skip head (index 0). Include tail only if snake just ate (tailFrozen).
+    const occupied = new Set<number>()
+    const bodyEnd = tailFrozen ? sn.length : sn.length - 1
+    for (let i = 1; i < bodyEnd; i++) {
+      occupied.add(P(sn[i].x, sn[i].y))
+    }
+    for (const o of state.obstacles) occupied.add(P(o.x, o.y))
+
+    let bestDir: Direction | null = null
+    let bestSpace = -1
+    let bestDist = Infinity
+
     for (const d of DIRS) {
       const dd = DIRECTION_MAP[d]
       const nx = hx + dd.x,
         ny = hy + dd.y
-      if (!inB(nx, ny)) continue
-      // Skip reverse (going into neck)
-      if (state.snake.length > 1 && nx === state.snake[1].x && ny === state.snake[1].y) continue
-      // Skip body/obstacle collision
-      const blocked = buildBlocked(!tailFrozen)
-      if (blocked.has(k(nx, ny))) continue
-      candidates.push({ dir: d, x: nx, y: ny })
-    }
 
-    if (candidates.length === 0) return null
+      // Out of bounds?
+      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+      // Reverse direction (into neck)?
+      if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
+      // Body or obstacle?
+      if (occupied.has(P(nx, ny))) continue
 
-    // === Strategy 1: Path to food via BFS ===
-    const blockedForFood = buildBlocked(!tailFrozen)
-    const foodPath = bfsPath(hx, hy, fx, fy, blockedForFood)
-
-    if (foodPath && foodPath.length > 0) {
-      // Check if the first step of the path is safe
-      const [firstX, firstY] = foodPath[0]
-      const firstDir = candidates.find((c) => c.x === firstX && c.y === firstY)
-      if (firstDir) {
-        const eatsFood = firstX === fx && firstY === fy
-        if (eatsFood ? canSurvive(firstX, firstY, true) : canSurvive(firstX, firstY, false)) {
-          // Verify: simulate the full path, check if we can reach food safely
-          // For each step on the path, check if there's enough room after
-          let canComplete = true
-          const simBlocked = new Set(blockedForFood)
-          let snakeLen = state.snake.length
-          let simTailIdx = state.snake.length - 1
-
-          for (let i = 0; i < foodPath.length; i++) {
-            const [px, py] = foodPath[i]
-            const eatsHere = px === fx && py === fy
-
-            if (eatsHere) {
-              simBlocked.add(k(px, py))
-              snakeLen++
-            } else {
-              // Move: tail frees, new head blocks
-              if (simTailIdx >= 0) {
-                simBlocked.delete(k(state.snake[simTailIdx].x, state.snake[simTailIdx].y))
-                simTailIdx--
-              }
-              simBlocked.add(k(px, py))
-            }
-
-            // After eating, check if remaining space is sufficient
-            if (eatsHere) {
-              const remaining = floodCount(px, py, simBlocked)
-              if (remaining < snakeLen) {
-                canComplete = false
-                break
-              }
-            }
-          }
-
-          if (canComplete) {
-            return firstDir.dir
-          }
-        }
+      // Simulate: add new head, remove tail if not eating
+      const eats = nx === fx && ny === fy
+      const simOcc = new Set(occupied)
+      simOcc.add(P(nx, ny))
+      if (!eats && sn.length > 1) {
+        simOcc.delete(P(sn[sn.length - 1].x, sn[sn.length - 1].y))
       }
-    }
 
-    // === Strategy 2: Chase tail (survival mode) ===
-    // Move toward the tail to free up space
-    let bestDir: Direction = candidates[0].dir
-    let bestScore = -Infinity
+      const space = bfsCount(nx, ny, simOcc)
+      const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
 
-    for (const c of candidates) {
-      const eats = c.x === fx && c.y === fy
-
-      // Safety check first
-      if (eats && !canSurvive(c.x, c.y, true)) continue
-      if (!eats && !canSurvive(c.x, c.y, false)) continue
-
-      let score: number
-
+      // Eating direction gets a big bonus, but only if survivable
       if (eats) {
-        // Eating is usually good, but only if we survive
-        score = 10000
-      } else {
-        // Evaluate reachable space after this move
-        const blocked = buildBlocked(false)
-        blocked.delete(k(tail.x, tail.y))
-        blocked.add(k(c.x, c.y))
-        const space = floodCount(c.x, c.y, blocked)
-
-        // Prefer directions closer to tail (chase our own tail for survival)
-        const distToTail = Math.abs(c.x - tail.x) + Math.abs(c.y - tail.y)
-
-        // Also consider distance to food (for eventual eating)
-        const distToFood = Math.abs(c.x - fx) + Math.abs(c.y - fy)
-
-        // Space is king, but prefer being near tail when space is tight
-        const spaceRatio = space / (state.snake.length * 2)
-        if (spaceRatio < 0.5) {
-          // Tight space: prioritize moving toward tail
-          score = space * 50 - distToTail * 200
-        } else {
-          // Plenty of room: prioritize food
-          score = space * 100 - distToFood * 10
+        // After eating, snake grows by 1; need space >= snake length
+        if (space >= sn.length + 1) {
+          if (space + 10000 > bestSpace || (space + 10000 === bestSpace && dist < bestDist)) {
+            bestSpace = space + 10000
+            bestDist = dist
+            bestDir = d
+          }
         }
+        continue
       }
 
-      if (score > bestScore) {
-        bestScore = score
-        bestDir = c.dir
+      // Normal move: more space is better, food distance as tiebreaker
+      if (space > bestSpace || (space === bestSpace && dist < bestDist)) {
+        bestSpace = space
+        bestDist = dist
+        bestDir = d
       }
     }
 
