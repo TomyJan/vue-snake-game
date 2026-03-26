@@ -297,87 +297,46 @@ export function useGame() {
 
 
 
-        // ===== AI: Hamiltonian Cycle + BFS Shortcuts =====
-  // Snake follows a serpentine cycle covering every cell - mathematically guaranteed never to die.
-  // Uses BFS to navigate around obstacles and take shortcuts to food.
+          // ===== AI: Hamiltonian Cycle + BFS Shortcuts =====
   const G = GAME_CONFIG.gridSize
   const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
-  const DIRS: Direction[] = ['up', 'right', 'down', 'left']
-
-  function posToIdx(x: number, y: number): number {
-    return y % 2 === 0 ? y * G + x : y * G + (G - 1 - x)
-  }
-  function idxToPos(i: number): [number, number] {
-    const y = Math.floor(i / G), c = i % G
-    return [y % 2 === 0 ? c : G - 1 - c, y]
-  }
-
+  const DIRS: Direction[] = ["up", "right", "down", "left"]
+  const CL = G * G
+  function p2i(x: number, y: number): number { return y % 2 === 0 ? y * G + x : y * G + (G - 1 - x) }
+  function i2p(i: number): [number, number] { const y = Math.floor(i / G), c = i % G; return [y % 2 === 0 ? c : G - 1 - c, y] }
   function computeBestDir(): Direction | null {
     const sn = state.snake
-    if (sn.length === 0) return 'right'
-    const hx = sn[0].x, hy = sn[0].y
-    const hi = posToIdx(hx, hy)
-
-    // Occupied: body + obstacles
+    if (sn.length === 0) return "right"
+    const hx = sn[0].x, hy = sn[0].y, hi = p2i(hx, hy)
     const occ = new Uint8Array(G * G)
     for (let i = 1; i < sn.length; i++) occ[sn[i].y * G + sn[i].x] = 1
     for (const o of state.obstacles) occ[o.y * G + o.x] = 1
-
-    // BFS pathfinding
-    function bfs(sx: number, sy: number, tx: number, ty: number): number[] | null {
-      if (sx === tx && sy === ty) return []
-      const N = G * G, vis = new Uint8Array(N), prev = new Int8Array(N).fill(-1)
+    function bfs(sx: number, sy: number, txx: number, tyy: number): number[] | null {
+      if (sx === txx && sy === tyy) return []
+      const N = G * G, vis = new Uint8Array(N), pr = new Int8Array(N).fill(-1)
       const qx = new Int32Array(N), qy = new Int32Array(N)
-      let h = 0, t = 0
-      vis[sy * G + sx] = 1; qx[t] = sx; qy[t] = sy; t++
-      while (h < t) {
-        const cx = qx[h], cy = qy[h]; h++
-        if (cx === tx && cy === ty) {
-          const p: number[] = []; let px = tx, py = ty
-          while (px !== sx || py !== sy) { const pd = prev[py * G + px]; p.push(pd); px -= DX[pd]; py -= DY[pd] }
-          p.reverse(); return p
-        }
-        for (let di = 0; di < 4; di++) {
-          const nx = cx + DX[di], ny = cy + DY[di]
+      let h = 0, t = 0; vis[sy * G + sx] = 1; qx[t] = sx; qy[t] = sy; t++
+      while (h < t) { const cx = qx[h], cy = qy[h]; h++
+        if (cx === txx && cy === tyy) { const p: number[] = []; let px = txx, py = tyy
+          while (px !== sx || py !== sy) { const pd = pr[py * G + px]; p.push(pd); px -= DX[pd]; py -= DY[pd] }
+          p.reverse(); return p }
+        for (let di = 0; di < 4; di++) { const nx = cx + DX[di], ny = cy + DY[di]
           if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-          const idx = ny * G + nx
-          if (vis[idx] || occ[idx]) continue
-          vis[idx] = 1; prev[idx] = di; qx[t] = nx; qy[t] = ny; t++
-        }
-      }
-      return null
-    }
-
-    // Try BFS shortcut to food
+          const idx = ny * G + nx; if (vis[idx] || occ[idx]) continue
+          vis[idx] = 1; pr[idx] = di; qx[t] = nx; qy[t] = ny; t++ } }
+      return null }
     const fx = state.food.pos.x, fy = state.food.pos.y
-    const fp = bfs(hx, hy, fx, fy)
-    if (fp !== null && fp.length > 0 && fp.length <= 12) {
-      return DIRS[fp[0]]
-    }
-
-    // Follow Hamiltonian cycle: BFS to next free cell on cycle
-    const CL = G * G
-    for (let offset = 1; offset <= CL; offset++) {
-      const ni = (hi + offset) % CL
-      const [nx, ny] = idxToPos(ni)
-      if (!occ[ny * G + nx]) {
+    const mDist = Math.abs(hx - fx) + Math.abs(hy - fy)
+    if (mDist <= 8) { const fp = bfs(hx, hy, fx, fy)
+      if (fp !== null && fp.length > 0 && fp.length <= 10) return DIRS[fp[0]] }
+    for (let o = 1; o <= CL; o++) { const ni = (hi + o) % CL; const [nx, ny] = i2p(ni)
+      if (!occ[ny * G + nx] && !(nx === hx && ny === hy)) {
         const cp = bfs(hx, hy, nx, ny)
-        if (cp !== null && cp.length > 0) return DIRS[cp[0]]
-      }
-    }
-
-    return 'right'
-  }
-
-  function gameTick() {
-    void tailFrozen
-    if (aiEnabled.value) {
-      const dir = computeBestDir()
-      if (dir) state.nextDirection = dir
-    }
-    moveSnake()
-  }
-
+        if (cp !== null && cp.length > 0) return DIRS[cp[0]] } }
+    return "right" }
+  function gameTick() { void tailFrozen
+    if (aiEnabled.value) { const dir = computeBestDir(); if (dir) state.nextDirection = dir }
+    moveSnake() }
 function toggleAI() { aiEnabled.value = !aiEnabled.value }
 
   function setSpeed(speed: number) {
