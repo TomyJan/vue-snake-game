@@ -1,12 +1,6 @@
 import { ref, reactive, computed, onUnmounted } from 'vue'
 import type { GameState, Direction, Position, Food } from '../types/game'
-import {
-  GAME_CONFIG,
-  DIRECTION_MAP,
-  OPPOSITE_DIRECTION,
-  KEY_DIRECTION_MAP,
-  OBSTACLE_COUNT,
-} from '../utils/constants'
+import { GAME_CONFIG, DIRECTION_MAP, OPPOSITE_DIRECTION, KEY_DIRECTION_MAP, OBSTACLE_COUNT } from '../utils/constants'
 import { positionsEqual, spawnFood, generateObstacles } from '../utils/helpers'
 
 const HIGH_SCORE_KEY = 'snake-high-score'
@@ -37,7 +31,7 @@ export function useGame() {
   let slowBuffTimer: ReturnType<typeof setTimeout> | null = null
   let particleTimer: ReturnType<typeof setInterval> | null = null
   const aiEnabled = ref(false)
-  let tailFrozen = false // true after eating: tail does not move next turn
+  let tailFrozen = false // true after eating: tail doesn't move next turn
 
   const head = computed(() => state.snake[0])
   const length = computed(() => state.snake.length)
@@ -55,12 +49,7 @@ export function useGame() {
   function startGame() {
     clearTimers()
     state.snake = initSnake()
-    state.obstacles = generateObstacles(
-      GAME_CONFIG.gridSize,
-      state.snake,
-      { x: 0, y: 0 },
-      OBSTACLE_COUNT,
-    )
+    state.obstacles = generateObstacles(GAME_CONFIG.gridSize, state.snake, { x: 0, y: 0 }, OBSTACLE_COUNT)
     state.food = spawnFood(GAME_CONFIG.gridSize, state.snake, state.obstacles)
     state.direction = 'right'
     state.nextDirection = 'right'
@@ -75,7 +64,7 @@ export function useGame() {
         state.status = 'playing'
         startGameTimer()
         startParticleTimer()
-        }
+      }
     }, START_DELAY_MS)
   }
 
@@ -95,6 +84,7 @@ export function useGame() {
     if (state.status === 'paused') {
       state.status = 'playing'
       startGameTimer()
+      if (aiEnabled.value) startAI()
     }
   }
 
@@ -152,26 +142,6 @@ export function useGame() {
   }
 
   function moveSnake(): { hit?: boolean; ate?: boolean } {
-    // Failsafe: if AI direction leads to body collision, try other directions
-    if (aiEnabled.value && state.snake.length > 1) {
-      const delta = DIRECTION_MAP[state.nextDirection]
-      const nhx = head.value.x + delta.x
-      const nhy = head.value.y + delta.y
-      const willHit = state.snake.some((seg, i) => i > 0 && seg.x === nhx && seg.y === nhy)
-      if (willHit) {
-        for (const d of DIRS) {
-          const dd = DIRECTION_MAP[d]
-          const tx = head.value.x + dd.x, ty = head.value.y + dd.y
-          if (tx < 0 || tx >= GAME_CONFIG.gridSize || ty < 0 || ty >= GAME_CONFIG.gridSize) continue
-          if (tx === state.snake[1].x && ty === state.snake[1].y) continue
-          if (!state.snake.some((seg) => seg.x === tx && seg.y === ty) &&
-              !state.obstacles.some((o) => o.x === tx && o.y === ty)) {
-            state.nextDirection = d
-            break
-          }
-        }
-      }
-    }
     state.direction = state.nextDirection
     const delta = DIRECTION_MAP[state.direction]
     const newHead: Position = {
@@ -179,12 +149,7 @@ export function useGame() {
       y: head.value.y + delta.y,
     }
 
-    if (
-      newHead.x < 0 ||
-      newHead.x >= GAME_CONFIG.gridSize ||
-      newHead.y < 0 ||
-      newHead.y >= GAME_CONFIG.gridSize
-    ) {
+    if (newHead.x < 0 || newHead.x >= GAME_CONFIG.gridSize || newHead.y < 0 || newHead.y >= GAME_CONFIG.gridSize) {
       gameOver()
       return { hit: true }
     }
@@ -235,16 +200,11 @@ export function useGame() {
 
   function startGameTimer() {
     stopGameTimer()
-    gameTimer = setInterval(() => {
-      gameTick()
-    }, state.speed)
+    gameTimer = setInterval(() => { moveSnake() }, state.speed)
   }
 
   function stopGameTimer() {
-    if (gameTimer) {
-      clearInterval(gameTimer)
-      gameTimer = null
-    }
+    if (gameTimer) { clearInterval(gameTimer); gameTimer = null }
   }
 
   function restartGameTimer() {
@@ -257,23 +217,14 @@ export function useGame() {
   }
 
   function stopParticleTimer() {
-    if (particleTimer) {
-      clearInterval(particleTimer)
-      particleTimer = null
-    }
+    if (particleTimer) { clearInterval(particleTimer); particleTimer = null }
   }
 
   function clearTimers() {
     stopGameTimer()
     stopParticleTimer()
-    if (startDelayTimer) {
-      clearTimeout(startDelayTimer)
-      startDelayTimer = null
-    }
-    if (slowBuffTimer) {
-      clearTimeout(slowBuffTimer)
-      slowBuffTimer = null
-    }
+    if (startDelayTimer) { clearTimeout(startDelayTimer); startDelayTimer = null }
+    if (slowBuffTimer) { clearTimeout(slowBuffTimer); slowBuffTimer = null }
   }
 
   function setDirection(dir: Direction) {
@@ -284,10 +235,7 @@ export function useGame() {
 
   function handleKeydown(e: KeyboardEvent) {
     const dir = KEY_DIRECTION_MAP[e.key]
-    if (dir) {
-      e.preventDefault()
-      setDirection(dir)
-    }
+    if (dir) { e.preventDefault(); setDirection(dir) }
     if (e.key === ' ' || e.key === 'Escape') {
       e.preventDefault()
       if (state.status === 'idle') startGame()
@@ -295,116 +243,115 @@ export function useGame() {
     }
   }
 
-
-
-          // ===== AI: Hamiltonian Cycle + BFS Shortcuts =====
+  // ===== AI =====
+  const AI_DIRS: Direction[] = ['up', 'right', 'down', 'left']
   const G = GAME_CONFIG.gridSize
-  const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
-  const DIRS: Direction[] = ["up", "right", "down", "left"]
-  function computeBestDir(): Direction | null {
-    const sn = state.snake
-    if (sn.length === 0) return "right"
-    if (sn.length === 1) {
-      const f = state.food.pos
-      if (f.x > sn[0].x) return "right"
-      if (f.x < sn[0].x) return "left"
-      if (f.y > sn[0].y) return "down"
-      return "up"
+
+  function key(x: number, y: number): string { return `${x},${y}` }
+  function inB(x: number, y: number): boolean { return x >= 0 && x < G && y >= 0 && y < G }
+
+  function floodCount(sx: number, sy: number, blocked: Set<string>): number {
+    const vis = new Set<string>()
+    const qx: number[] = [sx]
+    const qy: number[] = [sy]
+    vis.add(key(sx, sy))
+    let head2 = 0
+    while (head2 < qx.length) {
+      const cx = qx[head2], cy = qy[head2]; head2++
+      for (const d of AI_DIRS) {
+        const dd = DIRECTION_MAP[d]
+        const nx = cx + dd.x, ny = cy + dd.y
+        const k = key(nx, ny)
+        if (!inB(nx, ny) || blocked.has(k) || vis.has(k)) continue
+        vis.add(k)
+        qx.push(nx)
+        qy.push(ny)
+      }
     }
-    const hx = sn[0].x, hy = sn[0].y
-    const fx = state.food.pos.x, fy = state.food.pos.y
-    const tx = sn[sn.length - 1].x, ty = sn[sn.length - 1].y
-    const occ = new Uint8Array(G * G)
-    for (let i = 1; i < sn.length; i++) occ[sn[i].y * G + sn[i].x] = 1
-    for (const o of state.obstacles) occ[o.y * G + o.x] = 1
-    function bfs(sx: number, sy: number, txx: number, tyy: number, o: Uint8Array): number[] | null {
-      if (sx === txx && sy === tyy) return []
-      const N = G * G, vis = new Uint8Array(N), pr = new Int8Array(N).fill(-1)
-      const qx = new Int32Array(N), qy = new Int32Array(N)
-      let h = 0, t = 0; vis[sy * G + sx] = 1; qx[t] = sx; qy[t] = sy; t++
-      while (h < t) { const cx = qx[h], cy = qy[h]; h++
-        if (cx === txx && cy === tyy) { const p: number[] = []; let px = txx, py = tyy
-          while (px !== sx || py !== sy) { const pd = pr[py * G + px]; p.push(pd); px -= DX[pd]; py -= DY[pd] }
-          p.reverse(); return p }
-        for (let di = 0; di < 4; di++) { const nx = cx + DX[di], ny = cy + DY[di]
-          if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-          const idx = ny * G + nx; if (vis[idx] || o[idx]) continue
-          vis[idx] = 1; pr[idx] = di; qx[t] = nx; qy[t] = ny; t++ } }
-      return null }
-    // Step 1: BFS to food, simulate eating, check head can reach tail
-    const fp = bfs(hx, hy, fx, fy, occ)
-    if (fp !== null && fp.length > 0) {
-      const vo = new Uint8Array(G * G)
-      for (let i = 1; i < sn.length; i++) vo[sn[i].y * G + sn[i].x] = 1
-      for (const o of state.obstacles) vo[o.y * G + o.x] = 1
-      let vhx = hx, vhy = hy
-      for (const di of fp) { vo[vhy * G + vhx] = 1; vhx += DX[di]; vhy += DY[di] }
-      vo[ty * G + tx] = 0
-      const esc = bfs(vhx, vhy, tx, ty, vo)
-      if (esc !== null) return DIRS[fp[0]]
-    }
-    // Step 2: pick direction where head can still reach tail after moving
-    let best: Direction | null = null, bs = -1, bd = 1e9
-    for (let di = 0; di < 4; di++) {
-      const nx = hx + DX[di], ny = hy + DY[di]
-      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-      if (nx === sn[1].x && ny === sn[1].y) continue
-      if (occ[ny * G + nx]) continue
-      const simO = new Uint8Array(occ); simO[ny * G + nx] = 1; simO[ty * G + tx] = 0
-      // Critical: check head can reach tail after this move
-      const reachable = bfs(nx, ny, tx, ty, simO)
-      if (reachable === null) continue
-      // Count space for scoring
-      const vis2 = new Uint8Array(G * G), qx2 = new Int32Array(G * G), qy2 = new Int32Array(G * G)
-      let h2 = 0, t2 = 0; vis2[ny * G + nx] = 1; qx2[t2] = nx; qy2[t2] = ny; t2++
-      let cnt = 1
-      while (h2 < t2) { const cx = qx2[h2], cy = qy2[h2]; h2++
-        for (let d = 0; d < 4; d++) { const nnx = cx + DX[d], nny = cy + DY[d]
-          if (nnx < 0 || nnx >= G || nny < 0 || nny >= G) continue
-          const idx = nny * G + nnx; if (vis2[idx] || simO[idx]) continue
-          vis2[idx] = 1; qx2[t2] = nnx; qy2[t2] = nny; t2++; cnt++ } }
-      const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
-        if (cnt > bs || (cnt === bs && dist < bd)) { bs = cnt; bd = dist; best = DIRS[di] }
-    }
-    if (best !== null) return best
-    // Step 3: no safe direction found, pick any valid direction to avoid wall
-    for (let di = 0; di < 4; di++) {
-      const nx = hx + DX[di], ny = hy + DY[di]
-      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-      if (nx === sn[1].x && ny === sn[1].y) continue
-      if (!occ[ny * G + nx]) return DIRS[di]
-    }
-    return null
+    return vis.size
   }
-  function gameTick() { void tailFrozen
-    if (aiEnabled.value) { const dir = computeBestDir(); if (dir) state.nextDirection = dir }
-    moveSnake() }
-function toggleAI() { aiEnabled.value = !aiEnabled.value }
+
+  function findSafeDirection(): Direction {
+    const hp = head.value
+    if (!hp) return 'right'
+
+    // Build blocked set: body + obstacles
+    // After eating (tailFrozen), tail is still part of body → include it
+    const blocked = new Set<string>()
+    const excludeTail = !tailFrozen
+    const bodyEnd = excludeTail ? state.snake.length - 1 : state.snake.length
+    for (let i = 0; i < bodyEnd; i++) {
+      blocked.add(key(state.snake[i].x, state.snake[i].y))
+    }
+    for (const o of state.obstacles) blocked.add(key(o.x, o.y))
+
+    const hx = hp.x, hy = hp.y
+    const fx = state.food.pos.x, fy = state.food.pos.y
+    const tail = state.snake[state.snake.length - 1]
+
+    let bestDir: Direction = state.direction
+    let bestScore = -Infinity
+
+    for (const d of AI_DIRS) {
+      const dd = DIRECTION_MAP[d]
+      const nx = hx + dd.x, ny = hy + dd.y
+
+      // Skip if out of bounds or blocked
+      if (!inB(nx, ny) || blocked.has(key(nx, ny))) continue
+
+      // Skip reverse direction
+      if (state.snake.length > 1 && nx === state.snake[1].x && ny === state.snake[1].y) continue
+
+      let score: number
+
+      if (nx === fx && ny === fy) {
+        // Eating food: snake grows, tail stays → blocked includes tail
+        const afterEat = new Set(blocked)
+        afterEat.add(key(nx, ny))
+        const space = floodCount(nx, ny, afterEat)
+        // Only eat if we have enough room
+        score = space > state.snake.length + 3 ? space * 100 + 5000 : -10000
+      } else {
+        // Normal move: tail gets freed
+        const afterMove = new Set(blocked)
+        afterMove.delete(key(tail.x, tail.y))
+        afterMove.add(key(nx, ny))
+        const space = floodCount(nx, ny, afterMove)
+        // Prefer more space, prefer closer to food
+        const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
+        score = space * 100 - dist
+      }
+
+      if (score > bestScore) {
+        bestScore = score
+        bestDir = d
+      }
+    }
+
+    return bestDir
+  }
+
+  function aiTick() {
+    if (state.status !== 'playing') return
+    setDirection(findSafeDirection())
+  }
+
+
+  }
+
+  function toggleAI() { aiEnabled.value = !aiEnabled.value }
 
   function setSpeed(speed: number) {
     baseSpeed.value = speed
     if (state.status === 'idle') state.speed = speed
   }
 
-  onUnmounted(() => {
-    clearTimers()
-  })
+  onUnmounted(() => { clearTimers(); stopAI() })
 
   return {
-    state,
-    head,
-    length,
-    aiEnabled,
-    baseSpeed,
-    startGame,
-    endGame,
-    pauseGame,
-    resumeGame,
-    togglePause,
-    setDirection,
-    handleKeydown,
-    moveSnake,
-    toggleAI,
-    setSpeed,
+    state, head, length, aiEnabled, baseSpeed,
+    startGame, endGame, pauseGame, resumeGame, togglePause,
+    setDirection, handleKeydown, moveSnake,
+    toggleAI, setSpeed,
   }
 }
