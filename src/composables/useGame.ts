@@ -37,7 +37,6 @@ export function useGame() {
   let slowBuffTimer: ReturnType<typeof setTimeout> | null = null
   let particleTimer: ReturnType<typeof setInterval> | null = null
   const aiEnabled = ref(false)
-  let aiInterval: ReturnType<typeof setInterval> | null = null
   let tailFrozen = false // true after eating: tail doesn't move next turn
 
   const head = computed(() => state.snake[0])
@@ -76,14 +75,12 @@ export function useGame() {
         state.status = 'playing'
         startGameTimer()
         startParticleTimer()
-        if (aiEnabled.value) startAI()
       }
     }, START_DELAY_MS)
   }
 
   function endGame() {
     clearTimers()
-    stopAI()
     state.status = 'idle'
   }
 
@@ -91,7 +88,6 @@ export function useGame() {
     if (state.status === 'playing') {
       state.status = 'paused'
       stopGameTimer()
-      stopAI()
     }
   }
 
@@ -99,7 +95,6 @@ export function useGame() {
     if (state.status === 'paused') {
       state.status = 'playing'
       startGameTimer()
-      if (aiEnabled.value) startAI()
     }
   }
 
@@ -111,7 +106,6 @@ export function useGame() {
   function gameOver() {
     state.status = 'gameover'
     clearTimers()
-    stopAI()
     if (state.score > highScore.value) {
       highScore.value = state.score
       localStorage.setItem(HIGH_SCORE_KEY, String(state.score))
@@ -193,7 +187,6 @@ export function useGame() {
     state.snake.unshift(newHead)
 
     if (ate) {
-      // Snake grows: tail stays, mark it frozen for next AI check
       tailFrozen = true
       let points = 10
       let color = '#ff4444'
@@ -219,11 +212,18 @@ export function useGame() {
     }
   }
 
+  // ===== Game tick: AI decides direction, then snake moves =====
+  function gameTick() {
+    if (aiEnabled.value) {
+      const dir = computeBestDirection()
+      if (dir) state.nextDirection = dir
+    }
+    moveSnake()
+  }
+
   function startGameTimer() {
     stopGameTimer()
-    gameTimer = setInterval(() => {
-      moveSnake()
-    }, state.speed)
+    gameTimer = setInterval(gameTick, state.speed)
   }
 
   function stopGameTimer() {
@@ -282,33 +282,97 @@ export function useGame() {
   }
 
   // ===== AI =====
-  const AI_DIRS: Direction[] = ['up', 'right', 'down', 'left']
+  const DIRS: Direction[] = ['up', 'right', 'down', 'left']
   const G = GAME_CONFIG.gridSize
 
-  function key(x: number, y: number): string {
+  function k(x: number, y: number): string {
     return `${x},${y}`
   }
   function inB(x: number, y: number): boolean {
     return x >= 0 && x < G && y >= 0 && y < G
   }
 
-  function floodCount(sx: number, sy: number, blocked: Set<string>): number {
+  // Build a Set of occupied positions for the snake
+  // excludeTail: if true, the tail position is NOT included (snake will move away)
+  function buildBlocked(includeTail: boolean): Set<string> {
+    const s = new Set<string>()
+    const end = includeTail ? state.snake.length : state.snake.length - 1
+    for (let i = 1; i < end; i++) {
+      s.add(k(state.snake[i].x, state.snake[i].y))
+    }
+    for (const o of state.obstacles) s.add(k(o.x, o.y))
+    return s
+  }
+
+  // BFS: find shortest path from (sx,sy) to (tx,ty) avoiding blocked cells
+  // Returns the path as an array of [x,y] (excluding start), or null if no path
+  function bfsPath(
+    sx: number,
+    sy: number,
+    tx: number,
+    ty: number,
+    blocked: Set<string>,
+  ): [number, number][] | null {
     const vis = new Set<string>()
     const qx: number[] = [sx]
     const qy: number[] = [sy]
-    vis.add(key(sx, sy))
+    const prevX = new Map<string, number>()
+    const prevY = new Map<string, number>()
+    vis.add(k(sx, sy))
+
     let head2 = 0
     while (head2 < qx.length) {
       const cx = qx[head2],
         cy = qy[head2]
       head2++
-      for (const d of AI_DIRS) {
+      if (cx === tx && cy === ty) {
+        // Reconstruct path
+        const path: [number, number][] = []
+        let px = tx,
+          py = ty
+        while (px !== sx || py !== sy) {
+          path.push([px, py])
+          const pk = k(px, py)
+          px = prevX.get(pk)!
+          py = prevY.get(pk)!
+        }
+        path.reverse()
+        return path
+      }
+      for (const d of DIRS) {
         const dd = DIRECTION_MAP[d]
         const nx = cx + dd.x,
           ny = cy + dd.y
-        const k = key(nx, ny)
-        if (!inB(nx, ny) || blocked.has(k) || vis.has(k)) continue
-        vis.add(k)
+        const nk = k(nx, ny)
+        if (!inB(nx, ny) || blocked.has(nk) || vis.has(nk)) continue
+        vis.add(nk)
+        prevX.set(nk, cx)
+        prevY.set(nk, cy)
+        qx.push(nx)
+        qy.push(ny)
+      }
+    }
+    return null
+  }
+
+  // BFS: count reachable cells from (sx,sy)
+  function floodCount(sx: number, sy: number, blocked: Set<string>): number {
+    const vis = new Set<string>()
+    const qx: number[] = [sx]
+    const qy: number[] = [sy]
+    vis.add(k(sx, sy))
+    let head2 = 0
+    while (head2 < qx.length) {
+      const cx = qx[head2],
+        cy = qy[head2]
+      head2++
+      for (const d of DIRS) {
+        const dd = DIRECTION_MAP[d]
+        const nx = cx + dd.x,
+          ny = cy + dd.y
+        const nk = k(nx, ny)
+        if (!inB(nx, ny) || blocked.has(nk) || vis.has(nk)) continue
+        vis.add(nk)
         qx.push(nx)
         qy.push(ny)
       }
@@ -316,19 +380,29 @@ export function useGame() {
     return vis.size
   }
 
-  function findSafeDirection(): Direction {
-    const hp = head.value
-    if (!hp) return 'right'
+  // Check if snake can survive after taking a step to (nx, ny)
+  // Returns true if there's enough space
+  function canSurvive(nx: number, ny: number, eating: boolean): boolean {
+    const blocked = eating ? buildBlocked(true) : buildBlocked(false)
+    blocked.add(k(nx, ny))
 
-    // Build blocked set: body (skip head at [0]) + obstacles
-    // After eating (tailFrozen), include tail too
-    const blocked = new Set<string>()
-    const excludeTail = !tailFrozen
-    const bodyEnd = excludeTail ? state.snake.length - 1 : state.snake.length
-    for (let i = 1; i < bodyEnd; i++) {
-      blocked.add(key(state.snake[i].x, state.snake[i].y))
+    let space: number
+    if (eating) {
+      space = floodCount(nx, ny, blocked)
+      // After eating, snake is longer by 1, need at least snake.length + 1 space
+      return space >= state.snake.length + 1
+    } else {
+      const tail = state.snake[state.snake.length - 1]
+      blocked.delete(k(tail.x, tail.y))
+      space = floodCount(nx, ny, blocked)
+      // Snake doesn't grow, need at least current length space
+      return space >= state.snake.length
     }
-    for (const o of state.obstacles) blocked.add(key(o.x, o.y))
+  }
+
+  function computeBestDirection(): Direction | null {
+    const hp = head.value
+    if (!hp || state.snake.length === 0) return null
 
     const hx = hp.x,
       hy = hp.y
@@ -336,71 +410,129 @@ export function useGame() {
       fy = state.food.pos.y
     const tail = state.snake[state.snake.length - 1]
 
-    let bestDir: Direction = state.direction
-    let bestScore = -Infinity
-
-    for (const d of AI_DIRS) {
+    // Get valid adjacent positions (no walls, no body, no reverse)
+    const candidates: { dir: Direction; x: number; y: number }[] = []
+    for (const d of DIRS) {
       const dd = DIRECTION_MAP[d]
       const nx = hx + dd.x,
         ny = hy + dd.y
-
-      // Skip if out of bounds or blocked
-      if (!inB(nx, ny) || blocked.has(key(nx, ny))) continue
-
-      // Skip reverse direction
+      if (!inB(nx, ny)) continue
+      // Skip reverse (going into neck)
       if (state.snake.length > 1 && nx === state.snake[1].x && ny === state.snake[1].y) continue
+      // Skip body/obstacle collision
+      const blocked = buildBlocked(!tailFrozen)
+      if (blocked.has(k(nx, ny))) continue
+      candidates.push({ dir: d, x: nx, y: ny })
+    }
+
+    if (candidates.length === 0) return null
+
+    // === Strategy 1: Path to food via BFS ===
+    const blockedForFood = buildBlocked(!tailFrozen)
+    const foodPath = bfsPath(hx, hy, fx, fy, blockedForFood)
+
+    if (foodPath && foodPath.length > 0) {
+      // Check if the first step of the path is safe
+      const [firstX, firstY] = foodPath[0]
+      const firstDir = candidates.find((c) => c.x === firstX && c.y === firstY)
+      if (firstDir) {
+        const eatsFood = firstX === fx && firstY === fy
+        if (eatsFood ? canSurvive(firstX, firstY, true) : canSurvive(firstX, firstY, false)) {
+          // Verify: simulate the full path, check if we can reach food safely
+          // For each step on the path, check if there's enough room after
+          let canComplete = true
+          const simBlocked = new Set(blockedForFood)
+          let snakeLen = state.snake.length
+          let simTailIdx = state.snake.length - 1
+
+          for (let i = 0; i < foodPath.length; i++) {
+            const [px, py] = foodPath[i]
+            const eatsHere = px === fx && py === fy
+
+            if (eatsHere) {
+              simBlocked.add(k(px, py))
+              snakeLen++
+            } else {
+              // Move: tail frees, new head blocks
+              if (simTailIdx >= 0) {
+                simBlocked.delete(k(state.snake[simTailIdx].x, state.snake[simTailIdx].y))
+                simTailIdx--
+              }
+              simBlocked.add(k(px, py))
+            }
+
+            // After eating, check if remaining space is sufficient
+            if (eatsHere) {
+              const remaining = floodCount(px, py, simBlocked)
+              if (remaining < snakeLen) {
+                canComplete = false
+                break
+              }
+            }
+          }
+
+          if (canComplete) {
+            return firstDir.dir
+          }
+        }
+      }
+    }
+
+    // === Strategy 2: Chase tail (survival mode) ===
+    // Move toward the tail to free up space
+    let bestDir: Direction = candidates[0].dir
+    let bestScore = -Infinity
+
+    for (const c of candidates) {
+      const eats = c.x === fx && c.y === fy
+
+      // Safety check first
+      if (eats && !canSurvive(c.x, c.y, true)) continue
+      if (!eats && !canSurvive(c.x, c.y, false)) continue
 
       let score: number
 
-      if (nx === fx && ny === fy) {
-        // Eating food: snake grows, tail stays → blocked includes tail
-        const afterEat = new Set(blocked)
-        afterEat.add(key(nx, ny))
-        const space = floodCount(nx, ny, afterEat)
-        // Only eat if we have enough room
-        score = space > state.snake.length + 3 ? space * 100 + 5000 : -10000
+      if (eats) {
+        // Eating is usually good, but only if we survive
+        score = 10000
       } else {
-        // Normal move: tail gets freed
-        const afterMove = new Set(blocked)
-        afterMove.delete(key(tail.x, tail.y))
-        afterMove.add(key(nx, ny))
-        const space = floodCount(nx, ny, afterMove)
-        // Prefer more space, prefer closer to food
-        const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
-        score = space * 100 - dist
+        // Evaluate reachable space after this move
+        const blocked = buildBlocked(false)
+        blocked.delete(k(tail.x, tail.y))
+        blocked.add(k(c.x, c.y))
+        const space = floodCount(c.x, c.y, blocked)
+
+        // Prefer directions closer to tail (chase our own tail for survival)
+        const distToTail = Math.abs(c.x - tail.x) + Math.abs(c.y - tail.y)
+
+        // Also consider distance to food (for eventual eating)
+        const distToFood = Math.abs(c.x - fx) + Math.abs(c.y - fy)
+
+        // Space is king, but prefer being near tail when space is tight
+        const spaceRatio = space / (state.snake.length * 2)
+        if (spaceRatio < 0.5) {
+          // Tight space: prioritize moving toward tail
+          score = space * 50 - distToTail * 200
+        } else {
+          // Plenty of room: prioritize food
+          score = space * 100 - distToFood * 10
+        }
       }
 
       if (score > bestScore) {
         bestScore = score
-        bestDir = d
+        bestDir = c.dir
       }
     }
 
     return bestDir
   }
 
-  function aiTick() {
-    if (state.status !== 'playing') return
-    setDirection(findSafeDirection())
-  }
-
-  function startAI() {
-    stopAI()
-    aiEnabled.value = true
-    aiInterval = setInterval(aiTick, 30)
-  }
-
-  function stopAI() {
-    if (aiInterval) {
-      clearInterval(aiInterval)
-      aiInterval = null
-    }
-  }
+  // Removed: separate aiInterval timer.
+  // AI decisions are now integrated into gameTick() above.
 
   function toggleAI() {
     aiEnabled.value = !aiEnabled.value
-    if (aiEnabled.value && state.status === 'playing') startAI()
-    else stopAI()
   }
 
   function setSpeed(speed: number) {
@@ -410,7 +542,6 @@ export function useGame() {
 
   onUnmounted(() => {
     clearTimers()
-    stopAI()
   })
 
   return {
