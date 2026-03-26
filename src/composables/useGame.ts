@@ -317,26 +317,90 @@ export function useGame() {
     }
   }
 
-  // ===== AI: Greedy BFS with safety =====
+  // ===== AI: Chase-tail survival + safe food eating =====
+  // Core idea: always chase your own tail. The tail moves away each turn,
+  // so following it guarantees you never trap yourself.
+  // Only divert to eat food when it's safe (enough space after eating).
   const DIRS: Direction[] = ['up', 'right', 'down', 'left']
   const G = GAME_CONFIG.gridSize
 
-  // BFS: count reachable cells from (sx, sy) avoiding occupied positions
+  // BFS: find first step of shortest path from (sx,sy) to (tx,ty) avoiding occ
+  // Returns direction, or null if unreachable
+  function bfsFirstStep(
+    sx: number,
+    sy: number,
+    tx: number,
+    ty: number,
+    occ: Uint8Array,
+  ): Direction | null {
+    if (sx === tx && sy === ty) return null
+    const visited = new Uint8Array(G * G)
+    // prevDir[i] = direction index (0-3) that led to cell i, or -1 for start
+    const prevDir = new Int8Array(G * G).fill(-1)
+    const qx = new Int32Array(G * G)
+    const qy = new Int32Array(G * G)
+    let h = 0,
+      t = 0
+    visited[sy * G + sx] = 1
+    qx[t] = sx
+    qy[t] = sy
+    t++
+    while (h < t) {
+      const cx = qx[h],
+        cy = qy[h]
+      h++
+      if (cx === tx && cy === ty) {
+        // Found target. Backtrack to find cell right after start.
+        let px = tx,
+          py = ty
+        while (true) {
+          const idx = py * G + px
+          const pd = prevDir[idx]
+          if (pd === -1) return null // somehow at start
+          const dd = DIRECTION_MAP[DIRS[pd]]
+          const prevX = px - dd.x,
+            prevY = py - dd.y
+          if (prevX === sx && prevY === sy) {
+            // prevDir[idx] is the direction FROM start TO this cell
+            return DIRS[pd]
+          }
+          px = prevX
+          py = prevY
+        }
+      }
+      for (let di = 0; di < 4; di++) {
+        const dd = DIRECTION_MAP[DIRS[di]]
+        const nx = cx + dd.x,
+          ny = cy + dd.y
+        if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+        const idx = ny * G + nx
+        if (visited[idx] || occ[idx]) continue
+        visited[idx] = 1
+        prevDir[idx] = di
+        qx[t] = nx
+        qy[t] = ny
+        t++
+      }
+    }
+    return null // unreachable
+  }
+
+  // BFS: count reachable cells from (sx, sy)
   function bfsCount(sx: number, sy: number, occ: Uint8Array): number {
     const visited = new Uint8Array(G * G)
     const qx = new Int32Array(G * G)
     const qy = new Int32Array(G * G)
-    let head = 0,
-      tail = 0
+    let h = 0,
+      t = 0
     visited[sy * G + sx] = 1
-    qx[tail] = sx
-    qy[tail] = sy
-    tail++
+    qx[t] = sx
+    qy[t] = sy
+    t++
     let count = 1
-    while (head < tail) {
-      const cx = qx[head],
-        cy = qy[head]
-      head++
+    while (h < t) {
+      const cx = qx[h],
+        cy = qy[h]
+      h++
       for (const d of DIRS) {
         const dd = DIRECTION_MAP[d]
         const nx = cx + dd.x,
@@ -345,103 +409,104 @@ export function useGame() {
         const idx = ny * G + nx
         if (visited[idx] || occ[idx]) continue
         visited[idx] = 1
-        qx[tail] = nx
-        qy[tail] = ny
-        tail++
+        qx[t] = nx
+        qy[t] = ny
+        t++
         count++
       }
     }
     return count
   }
 
-  function computeBestDirection(): Direction | null {
+  // Build occupied array for current snake state
+  function buildOcc(): Uint8Array {
     const sn = state.snake
-    if (sn.length === 0) return null
-
-    const hx = sn[0].x,
-      hy = sn[0].y
-    const fx = state.food.pos.x,
-      fy = state.food.pos.y
-
-    // Build occupied array: body (index 1..end) + obstacles
     const occ = new Uint8Array(G * G)
-    const bodyEnd = tailFrozen ? sn.length : sn.length - 1 // include tail if just ate
-    for (let i = 1; i < bodyEnd; i++) {
+    const end = tailFrozen ? sn.length : sn.length - 1
+    for (let i = 1; i < end; i++) {
       occ[sn[i].y * G + sn[i].x] = 1
     }
     for (const o of state.obstacles) {
       occ[o.y * G + o.x] = 1
     }
+    return occ
+  }
 
-    let bestDir: Direction | null = null
-    let bestScore = -Infinity
-    let bestDist = Infinity
+  function computeBestDirection(): Direction | null {
+    const sn = state.snake
+    if (sn.length === 0) return null
+    if (sn.length === 1) {
+      // Single segment, just go toward food
+      const hx = sn[0].x,
+        hy = sn[0].y
+      const fx = state.food.pos.x,
+        fy = state.food.pos.y
+      if (fx > hx) return 'right'
+      if (fx < hx) return 'left'
+      if (fy > hy) return 'down'
+      return 'up'
+    }
 
-    const tailPos = sn.length > 1 ? sn[sn.length - 1] : null
+    const hx = sn[0].x,
+      hy = sn[0].y
+    const fx = state.food.pos.x,
+      fy = state.food.pos.y
+    const tx = sn[sn.length - 1].x,
+      ty = sn[sn.length - 1].y
+    const occ = buildOcc()
 
-    for (const d of DIRS) {
-      const dd = DIRECTION_MAP[d]
+    // Can we reach the food?
+    const foodDir = bfsFirstStep(hx, hy, fx, fy, occ)
+
+    if (foodDir && !tailFrozen) {
+      // Food is reachable. Is it safe to eat?
+      // Simulate: head moves to food, snake grows, tail stays
+      const dd = DIRECTION_MAP[foodDir]
       const nx = hx + dd.x,
         ny = hy + dd.y
-
-      // Out of bounds?
-      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-      // Reverse direction (into neck)?
-      if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
-      // Collides with body/obstacle?
-      if (occ[ny * G + nx]) continue
-
-      const eats = nx === fx && ny === fy
-      const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
-
-      // Simulate the board after this move
       const simOcc = new Uint8Array(occ)
-      simOcc[ny * G + nx] = 1 // new head position becomes occupied
-      if (!eats && sn.length > 1) {
-        // Tail moves away → free its cell
-        const tx = sn[sn.length - 1].x,
-          ty = sn[sn.length - 1].y
-        simOcc[ty * G + tx] = 0
-      }
-
+      simOcc[ny * G + nx] = 1 // new head (food position)
+      // tail stays (don't remove it)
       const space = bfsCount(nx, ny, simOcc)
-
-      if (eats) {
-        // After eating: snake grows by 1, tail stays.
-        // Need enough space to survive the longer body.
-        // Snake length + 5 gives comfortable margin for maneuvering.
-        if (space >= sn.length + 5) {
-          const score = space * 100 + 50000
-          if (score > bestScore || (score === bestScore && dist < bestDist)) {
-            bestScore = score
-            bestDist = dist
-            bestDir = d
-          }
-        }
-      } else {
-        // Normal move: need at least a few cells free (very loose check)
-        if (space < 3) continue
-
-        // Penalty for moving adjacent to tail:
-        // If we're next to the tail and eat food, the tail freezes
-        // and we're trapped. Avoid being 1 step from the tail.
-        let tailPenalty = 0
-        if (tailPos && !tailFrozen) {
-          const distToTail = Math.abs(nx - tailPos.x) + Math.abs(ny - tailPos.y)
-          if (distToTail <= 1) {
-            tailPenalty = 200 // discourage getting close to tail
-          }
-        }
-
-        const score = space * 100 - dist - tailPenalty
-        if (score > bestScore || (score === bestScore && dist < bestDist)) {
-          bestScore = score
-          bestDist = dist
-          bestDir = d
+      // After eating: snake is sn.length + 1
+      // Need at least snake.length + 1 space to survive
+      if (space >= sn.length + 1) {
+        // Verify we can still reach the tail after eating
+        const tailDir = bfsFirstStep(nx, ny, tx, ty, simOcc)
+        if (tailDir) {
+          return foodDir
         }
       }
     }
 
+    // No safe food path → chase the tail
+    // This guarantees we never trap ourselves
+    if (!tailFrozen) {
+      const tailDir = bfsFirstStep(hx, hy, tx, ty, occ)
+      if (tailDir) return tailDir
+    }
+
+    // Tail unreachable (shouldn't happen normally) → greedy space max
+    let bestDir: Direction | null = null
+    let bestSpace = -1
+    for (const d of DIRS) {
+      const dd = DIRECTION_MAP[d]
+      const nx = hx + dd.x,
+        ny = hy + dd.y
+      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+      if (nx === sn[1].x && ny === sn[1].y) continue
+      if (occ[ny * G + nx]) continue
+      const simOcc = new Uint8Array(occ)
+      simOcc[ny * G + nx] = 1
+      if (!tailFrozen) {
+        simOcc[sn[sn.length - 1].y * G + sn[sn.length - 1].x] = 0
+      }
+      const space = bfsCount(nx, ny, simOcc)
+      if (space > bestSpace) {
+        bestSpace = space
+        bestDir = d
+      }
+    }
     return bestDir
   }
 
