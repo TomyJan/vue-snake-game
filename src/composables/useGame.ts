@@ -37,7 +37,7 @@ export function useGame() {
   let slowBuffTimer: ReturnType<typeof setTimeout> | null = null
   let particleTimer: ReturnType<typeof setInterval> | null = null
   const aiEnabled = ref(false)
-  let tailFrozen = false // true after eating: tail doesn't move next turn
+  let tailFrozen = false // true after eating: tail does not move next turn
 
   const head = computed(() => state.snake[0])
   const length = computed(() => state.snake.length)
@@ -354,6 +354,7 @@ export function useGame() {
   }
 
   function gameTick() {
+    void tailFrozen // used by game logic
     if (aiEnabled.value) {
       const dir = computeBestDir()
       if (dir) state.nextDirection = dir
@@ -361,7 +362,9 @@ export function useGame() {
     moveSnake()
   }
 
-function setSpeed(speed: number) {
+function toggleAI() { aiEnabled.value = !aiEnabled.value }
+
+  function setSpeed(speed: number) {
     baseSpeed.value = speed
     if (state.status === 'idle') state.speed = speed
   }
