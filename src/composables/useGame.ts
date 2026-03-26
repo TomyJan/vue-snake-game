@@ -351,7 +351,7 @@ export function useGame() {
             if (nnx < 0 || nnx >= G || nny < 0 || nny >= G) continue
             const idx = nny * G + nnx; if (vis2[idx] || simOcc[idx]) continue
             vis2[idx] = 1; qx2[t2] = nnx; qy2[t2] = nny; t2++; cnt++ } }
-        safe = cnt >= sn.length + 3
+        safe = cnt >= sn.length + 1
       } else {
         // Non-eating: check head can reach tail
         simOcc[ty * G + tx] = 0
