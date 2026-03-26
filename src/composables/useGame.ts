@@ -425,42 +425,44 @@ export function useGame() {
       occ[o.y * G + o.x] = 1
     }
 
-    // Default: follow the Hamiltonian cycle
-    const nextIdx = (headIdx + 1) % CYCLE_LEN
-    const [nextX, nextY] = cycleIdxToPos(nextIdx)
-    let bestDir = dirBetween(hx, hy, nextX, nextY)
-
-    // Try BFS shortcut to food
+    // Try BFS shortcut to food first
     const foodPath = bfsPath(hx, hy, fx, fy, occ)
-    if (foodPath && foodPath.length > 0 && foodPath.length <= 15) {
-      // Check shortcut doesn't go "backward" on the cycle (into body)
-      // The body occupies indices [headIdx - sn.length + 1, headIdx]
-      // Safe shortcut cells must be ahead of head on the cycle
+    if (foodPath && foodPath.length > 0 && foodPath.length <= 10) {
+      // Check all shortcut cells are "ahead" on the cycle (not in body region)
       let safe = true
       for (const [px, py] of foodPath) {
         const pi = posToCycleIdx(px, py)
-        // Distance forward on cycle from head
         const forwardDist = (pi - headIdx + CYCLE_LEN) % CYCLE_LEN
         const backwardDist = CYCLE_LEN - forwardDist
-        // Must be ahead (forward), and not too close to body
         if (forwardDist > backwardDist || forwardDist <= 0) {
           safe = false
           break
         }
-        // Must not be in the body's forward region
-        const bodyAhead = sn.length - (tailFrozen ? 0 : 1)
-        if (forwardDist <= bodyAhead) {
+        if (forwardDist <= sn.length) {
           safe = false
           break
         }
       }
       if (safe) {
         const [fx2, fy2] = foodPath[0]
-        bestDir = dirBetween(hx, hy, fx2, fy2)
+        return dirBetween(hx, hy, fx2, fy2)
       }
     }
 
-    return bestDir
+    // Follow the Hamiltonian cycle
+    // Try next cell, then skip ahead if blocked
+    for (let offset = 1; offset <= CYCLE_LEN; offset++) {
+      const nextIdx = (headIdx + offset) % CYCLE_LEN
+      const [nx, ny] = cycleIdxToPos(nextIdx)
+      if (occ[ny * G + nx]) continue // blocked by body/obstacle
+      // Skip reverse direction (into neck)
+      if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
+      // Found a free cell on the cycle ahead of us
+      return dirBetween(hx, hy, nx, ny)
+    }
+
+    // Should never reach here on a valid board
+    return 'right'
   }
 
   // Removed: separate aiInterval timer.
