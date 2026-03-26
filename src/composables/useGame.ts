@@ -377,6 +377,8 @@ export function useGame() {
     let bestScore = -Infinity
     let bestDist = Infinity
 
+    const tailPos = sn.length > 1 ? sn[sn.length - 1] : null
+
     for (const d of DIRS) {
       const dd = DIRECTION_MAP[d]
       const nx = hx + dd.x,
@@ -405,8 +407,10 @@ export function useGame() {
       const space = bfsCount(nx, ny, simOcc)
 
       if (eats) {
-        // After eating: snake grows, need space >= length + 1
-        if (space >= sn.length + 1) {
+        // After eating: snake grows by 1, tail stays.
+        // Need TWICE the snake length in reachable space to be safe.
+        // The snake will need room to maneuver around its longer body.
+        if (space >= sn.length * 2) {
           const score = space * 100 + 50000
           if (score > bestScore || (score === bestScore && dist < bestDist)) {
             bestScore = score
@@ -415,8 +419,21 @@ export function useGame() {
           }
         }
       } else {
-        // Normal move: maximize available space
-        const score = space * 100 - dist
+        // Normal move: need at least snake length in reachable space
+        if (space < sn.length) continue
+
+        // Penalty for moving adjacent to tail:
+        // If we're next to the tail and eat food, the tail freezes
+        // and we're trapped. Avoid being 1 step from the tail.
+        let tailPenalty = 0
+        if (tailPos && !tailFrozen) {
+          const distToTail = Math.abs(nx - tailPos.x) + Math.abs(ny - tailPos.y)
+          if (distToTail <= 1) {
+            tailPenalty = 200 // discourage getting close to tail
+          }
+        }
+
+        const score = space * 100 - dist - tailPenalty
         if (score > bestScore || (score === bestScore && dist < bestDist)) {
           bestScore = score
           bestDist = dist
