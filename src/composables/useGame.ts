@@ -75,7 +75,7 @@ export function useGame() {
         state.status = 'playing'
         startGameTimer()
         startParticleTimer()
-      }
+        }
     }, START_DELAY_MS)
   }
 
@@ -95,7 +95,6 @@ export function useGame() {
     if (state.status === 'paused') {
       state.status = 'playing'
       startGameTimer()
-      if (aiEnabled.value) startAI()
     }
   }
 
@@ -276,40 +275,7 @@ export function useGame() {
     }
   }
 
-  // ===== AI =====
-  const AI_DIRS: Direction[] = ['up', 'right', 'down', 'left']
-  const G = GAME_CONFIG.gridSize
 
-  function key(x: number, y: number): string {
-    return `${x},${y}`
-  }
-  function inB(x: number, y: number): boolean {
-    return x >= 0 && x < G && y >= 0 && y < G
-  }
-
-  function floodCount(sx: number, sy: number, blocked: Set<string>): number {
-    const vis = new Set<string>()
-    const qx: number[] = [sx]
-    const qy: number[] = [sy]
-    vis.add(key(sx, sy))
-    let head2 = 0
-    while (head2 < qx.length) {
-      const cx = qx[head2],
-        cy = qy[head2]
-      head2++
-      for (const d of AI_DIRS) {
-        const dd = DIRECTION_MAP[d]
-        const nx = cx + dd.x,
-          ny = cy + dd.y
-        const k = key(nx, ny)
-        if (!inB(nx, ny) || blocked.has(k) || vis.has(k)) continue
-        vis.add(k)
-        qx.push(nx)
-        qy.push(ny)
-      }
-    }
-    return vis.size
-  }
 
   // ===== AI: Greedy Solver (reference: chuyangliu/snake) =====
   function computeBestDir(): Direction | null {
@@ -383,6 +349,7 @@ export function useGame() {
     moveSnake()
   }
   function toggleAI() { aiEnabled.value = !aiEnabled.value }
+
 
 
   function setSpeed(speed: number) {
