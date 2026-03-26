@@ -183,7 +183,11 @@ export function useGame() {
       return { hit: true }
     }
 
-    if (state.snake.some((seg) => positionsEqual(seg, newHead))) {
+    if (state.snake.some((seg, i) => {
+      if (i === 0) return false // skip head
+      if (i === state.snake.length - 1 && !tailFrozen) return false // tail moves away
+      return positionsEqual(seg, newHead)
+    })) {
       gameOver()
       return { hit: true }
     }
@@ -287,10 +291,10 @@ export function useGame() {
     const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
     const dirs: Direction[] = ['up', 'right', 'down', 'left']
 
-    // Build occupied grid: body (skip head at [0]) + obstacles
+    // Build occupied grid: ALL body (including head) + obstacles
     const occ = new Uint8Array(G * G)
     const bodyEnd = tailFrozen ? sn.length : sn.length - 1
-    for (let i = 1; i < bodyEnd; i++) occ[sn[i].y * G + sn[i].x] = 1
+    for (let i = 0; i < bodyEnd; i++) occ[sn[i].y * G + sn[i].x] = 1
     for (const o of state.obstacles) occ[o.y * G + o.x] = 1
 
     // BFS: can (sx,sy) reach (tx,ty) avoiding occupied cells?
