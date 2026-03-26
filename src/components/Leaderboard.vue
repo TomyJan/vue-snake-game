@@ -10,48 +10,47 @@
           <button class="btn-sm" @click="onLogout">Logout</button>
         </template>
         <template v-else>
-          <button class="btn-sm btn-login" @click="showLogin = true">🔑 Login to compete</button>
+          <button class="btn-sm btn-login" @click="onStartLogin">🔑 Login with GitHub</button>
         </template>
       </div>
     </div>
 
-    <!-- Login modal -->
+    <!-- Device Flow login modal -->
     <Teleport to="body">
       <Transition name="fade">
-        <div v-if="showLogin" class="modal-overlay" @click.self="showLogin = false">
+        <div v-if="showLogin" class="modal-overlay" @click.self="cancelLogin">
           <div class="modal">
-            <h3>🔑 GitHub Login</h3>
-            <p class="login-desc">
-              Create a
+            <h3>🔑 Login with GitHub</h3>
+
+            <!-- Step 1: Loading -->
+            <div v-if="loginStep === 'loading'" class="login-loading">
+              <div class="spinner"></div>
+              <p>Requesting device code...</p>
+            </div>
+
+            <!-- Step 2: Show code, wait for authorization -->
+            <div v-else-if="loginStep === 'code'">
+              <p class="login-desc">Click the button below to open GitHub, then enter this code:</p>
+              <div class="user-code">{{ deviceUserCode }}</div>
               <a
-                href="https://github.com/settings/personal-access-tokens/new"
+                :href="deviceVerifyUrl"
                 target="_blank"
                 rel="noopener"
+                class="btn-sm btn-primary btn-github"
               >
-                Fine-grained Personal Access Token
+                Open GitHub to Authorize →
               </a>
-              with these permissions:
-            </p>
-            <ul class="scope-list">
-              <li><strong>Repository access:</strong> TomyJan/vue-snake-game</li>
-              <li><strong>Permissions:</strong> Issues → Read and Write</li>
-            </ul>
-            <p class="login-hint">
-              This is needed to save your score. Your token stays in your browser only.
-            </p>
-            <input
-              v-model="tokenInput"
-              type="password"
-              placeholder="github_pat_xxxxxxxxxxxxxxxx"
-              class="token-input"
-              @keydown.enter="onLogin"
-            />
+              <p class="login-hint">
+                Waiting for authorization...
+                <span class="spinner-sm"></span>
+              </p>
+            </div>
+
+            <!-- Error -->
             <p v-if="loginError" class="error">{{ loginError }}</p>
+
             <div class="modal-actions">
-              <button class="btn-sm btn-primary" @click="onLogin" :disabled="!tokenInput">
-                Login
-              </button>
-              <button class="btn-sm" @click="showLogin = false">Cancel</button>
+              <button class="btn-sm" @click="cancelLogin">Cancel</button>
             </div>
           </div>
         </div>
@@ -86,6 +85,7 @@ import {
   clearToken,
   getUser,
   fetchLeaderboard,
+  startDeviceFlow,
   type GitHubUser,
   type LeaderboardEntry,
 } from '../services/github'
@@ -93,9 +93,14 @@ import {
 const user = ref<GitHubUser | null>(null)
 const entries = ref<LeaderboardEntry[]>([])
 const loading = ref(true)
+
+// Device Flow state
 const showLogin = ref(false)
-const tokenInput = ref('')
+const loginStep = ref<'loading' | 'code'>('loading')
+const deviceUserCode = ref('')
+const deviceVerifyUrl = ref('')
 const loginError = ref('')
+let cancelFlow: (() => void) | null = null
 
 async function init() {
   const token = getToken()
@@ -119,18 +124,47 @@ async function refreshLeaderboard() {
   loading.value = false
 }
 
-async function onLogin() {
+function onStartLogin() {
+  showLogin.value = true
+  loginStep.value = 'loading'
   loginError.value = ''
-  const token = tokenInput.value.trim()
-  if (!token) return
-  try {
-    user.value = await getUser(token)
-    setToken(token)
-    showLogin.value = false
-    tokenInput.value = ''
-  } catch {
-    loginError.value = 'Invalid token. Check your permissions.'
+
+  cancelFlow = startDeviceFlow({
+    onDeviceCode(state) {
+      deviceUserCode.value = state.userCode
+      deviceVerifyUrl.value = `${state.verificationUri}?user_code=${state.userCode}`
+      loginStep.value = 'code'
+    },
+    onToken(token) {
+      setToken(token)
+      showLogin.value = false
+      cancelFlow = null
+      // Re-fetch user with the new token
+      getUser(token)
+        .then((u) => {
+          user.value = u
+        })
+        .catch(() => {})
+    },
+    onError(err) {
+      if (err.message === 'Device code expired') {
+        loginError.value = 'Code expired. Please try again.'
+      } else if (err.message === 'access_denied') {
+        loginError.value = 'Login cancelled.'
+      } else {
+        loginError.value = err.message
+      }
+      loginStep.value = 'loading' // hide the code section
+    },
+  })
+}
+
+function cancelLogin() {
+  if (cancelFlow) {
+    cancelFlow()
+    cancelFlow = null
   }
+  showLogin.value = false
 }
 
 function onLogout() {
@@ -193,6 +227,8 @@ onMounted(init)
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
+  text-decoration: none;
+  display: inline-block;
 }
 
 .btn-sm:hover {
@@ -211,6 +247,12 @@ onMounted(init)
   color: #000;
   border-color: var(--accent);
   font-weight: bold;
+}
+
+.btn-github {
+  margin-top: 16px;
+  font-size: 14px;
+  padding: 10px 20px;
 }
 
 .lb-body {
@@ -235,7 +277,7 @@ onMounted(init)
 }
 
 .lb-row.is-me {
-  background: rgba(var(--accent-rgb, 57, 255, 150), 0.1);
+  background: rgba(57, 255, 150, 0.1);
   border: 1px solid var(--accent);
 }
 
@@ -297,66 +339,81 @@ onMounted(init)
   padding: 28px;
   max-width: 420px;
   width: 90%;
+  text-align: center;
 }
 
 .modal h3 {
-  margin: 0 0 12px;
+  margin: 0 0 16px;
 }
 
 .login-desc {
-  font-size: 13px;
-  margin: 0 0 8px;
-}
-
-.login-desc a {
-  color: var(--accent);
-}
-
-.scope-list {
-  font-size: 12px;
-  margin: 0 0 12px;
-  padding-left: 20px;
+  font-size: 14px;
+  margin: 0 0 16px;
   opacity: 0.8;
 }
 
-.scope-list li {
-  margin: 4px 0;
+.user-code {
+  font-size: 32px;
+  font-weight: bold;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 6px;
+  padding: 16px;
+  background: var(--bg);
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  color: var(--accent);
+  user-select: all;
 }
 
 .login-hint {
-  font-size: 12px;
+  font-size: 13px;
   opacity: 0.5;
-  margin: 0 0 12px;
+  margin-top: 16px;
 }
 
-.token-input {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--card-border);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 14px;
-  font-family: monospace;
-  box-sizing: border-box;
+.login-loading {
+  padding: 30px 0;
 }
 
-.token-input:focus {
-  outline: none;
-  border-color: var(--accent);
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--card-border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 12px;
+}
+
+.spinner-sm {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--card-border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .error {
   color: var(--danger);
   font-size: 13px;
-  margin: 8px 0 0;
+  margin: 12px 0 0;
 }
 
 .modal-actions {
   display: flex;
   gap: 8px;
   margin-top: 16px;
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .fade-enter-active,
