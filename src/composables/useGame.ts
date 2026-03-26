@@ -152,6 +152,33 @@ export function useGame() {
   }
 
   function moveSnake(): { hit?: boolean; ate?: boolean } {
+    // Safety: if AI direction would cause self-collision, override it
+    if (aiEnabled.value && state.snake.length > 1) {
+      const delta = DIRECTION_MAP[state.nextDirection]
+      const nhx = head.value.x + delta.x
+      const nhy = head.value.y + delta.y
+      const willHitBody = state.snake.some(
+        (seg, i) => i > 0 && seg.x === nhx && seg.y === nhy,
+      )
+      if (willHitBody) {
+        // Try all directions to find a safe one
+        for (const d of DIRS) {
+          const dd = DIRECTION_MAP[d]
+          const tx = head.value.x + dd.x,
+            ty = head.value.y + dd.y
+          if (tx < 0 || tx >= GAME_CONFIG.gridSize || ty < 0 || ty >= GAME_CONFIG.gridSize)
+            continue
+          if (tx === state.snake[1].x && ty === state.snake[1].y) continue
+          const hitSeg = state.snake.some((seg) => seg.x === tx && seg.y === ty)
+          const hitObs = state.obstacles.some((o) => o.x === tx && o.y === ty)
+          if (!hitSeg && !hitObs) {
+            state.nextDirection = d
+            break
+          }
+        }
+      }
+    }
+
     state.direction = state.nextDirection
     const delta = DIRECTION_MAP[state.direction]
     const newHead: Position = {
