@@ -141,6 +141,36 @@ export function useGame() {
   }
 
   function moveSnake(): { hit?: boolean; ate?: boolean } {
+    // Failsafe: if next direction leads to body, try other directions
+    if (aiEnabled.value && state.snake.length > 1) {
+      const delta = DIRECTION_MAP[state.nextDirection]
+      const nhx = head.value.x + delta.x
+      const nhy = head.value.y + delta.y
+      const hitBody = state.snake.some((seg, i) => {
+        if (i === 0) return false // head itself
+        if (i === state.snake.length - 1 && !tailFrozen) return false // tail moves away
+        return seg.x === nhx && seg.y === nhy
+      })
+      if (hitBody || nhx < 0 || nhx >= GAME_CONFIG.gridSize || nhy < 0 || nhy >= GAME_CONFIG.gridSize) {
+        // Try all 4 directions
+        const allDirs: Direction[] = ['up', 'right', 'down', 'left']
+        const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
+        for (let di = 0; di < 4; di++) {
+          const tx = head.value.x + DX[di], ty = head.value.y + DY[di]
+          if (tx < 0 || tx >= GAME_CONFIG.gridSize || ty < 0 || ty >= GAME_CONFIG.gridSize) continue
+          if (tx === state.snake[1].x && ty === state.snake[1].y) continue
+          const hit = state.snake.some((seg, i) => {
+            if (i === 0) return false
+            if (i === state.snake.length - 1 && !tailFrozen) return false
+            return seg.x === tx && seg.y === ty
+          })
+          if (!hit && !state.obstacles.some(o => o.x === tx && o.y === ty)) {
+            state.nextDirection = allDirs[di]
+            break
+          }
+        }
+      }
+    }
     state.direction = state.nextDirection
     const delta = DIRECTION_MAP[state.direction]
     const newHead: Position = {
