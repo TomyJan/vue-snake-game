@@ -332,17 +332,31 @@ export function useGame() {
 
       const eats = nx === fx && ny === fy
 
-      // Simulate move: add new head, handle tail
+      // Simulate move
       const simOcc = new Uint8Array(occ)
       simOcc[ny * G + nx] = 1 // new head
-      if (!eats && sn.length > 1) {
-        simOcc[sn[sn.length - 1].y * G + sn[sn.length - 1].x] = 0 // tail moves away
-      }
+      if (!eats) simOcc[ty * G + tx] = 0 // tail moves away
 
-      // Safety check: can head reach tail after this move?
-      // Exclude tail from occupied for pathfinding (it's the target)
-      simOcc[ty * G + tx] = 0
-      const safe = canReach(nx, ny, tx, ty, simOcc)
+      // Safety check differs for eating vs non-eating
+      let safe = false
+      if (eats) {
+        // After eating: check available space >= snake length + 1
+        simOcc[ty * G + tx] = 0 // tail will move on next non-eat turn
+        const vis2 = new Uint8Array(G * G)
+        const qx2 = new Int32Array(G * G), qy2 = new Int32Array(G * G)
+        let h2 = 0, t2 = 0; vis2[ny * G + nx] = 1; qx2[t2] = nx; qy2[t2] = ny; t2++
+        let cnt = 1
+        while (h2 < t2) { const cx = qx2[h2], cy = qy2[h2]; h2++
+          for (let d = 0; d < 4; d++) { const nnx = cx + DX[d], nny = cy + DY[d]
+            if (nnx < 0 || nnx >= G || nny < 0 || nny >= G) continue
+            const idx = nny * G + nnx; if (vis2[idx] || simOcc[idx]) continue
+            vis2[idx] = 1; qx2[t2] = nnx; qy2[t2] = nny; t2++; cnt++ } }
+        safe = cnt >= sn.length + 3
+      } else {
+        // Non-eating: check head can reach tail
+        simOcc[ty * G + tx] = 0
+        safe = canReach(nx, ny, tx, ty, simOcc)
+      }
 
       if (safe) {
         const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
