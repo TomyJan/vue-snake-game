@@ -216,7 +216,43 @@ export function useGame() {
   function gameTick() {
     if (aiEnabled.value) {
       const dir = computeBestDirection()
-      if (dir) state.nextDirection = dir
+      if (dir) {
+        state.nextDirection = dir
+      } else {
+        // AI found no safe direction — try to find ANY non-collision direction
+        const sn = state.snake
+        if (sn.length > 0) {
+          const hx = sn[0].x,
+            hy = sn[0].y
+          for (const d of DIRS) {
+            const dd = DIRECTION_MAP[d]
+            const nx = hx + dd.x,
+              ny = hy + dd.y
+            if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+            if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
+            const blocked = tailFrozen ? sn.length : sn.length - 1
+            let hit = false
+            for (let i = 1; i < blocked; i++) {
+              if (sn[i].x === nx && sn[i].y === ny) {
+                hit = true
+                break
+              }
+            }
+            if (!hit) {
+              for (const o of state.obstacles) {
+                if (o.x === nx && o.y === ny) {
+                  hit = true
+                  break
+                }
+              }
+            }
+            if (!hit) {
+              state.nextDirection = d
+              break
+            }
+          }
+        }
+      }
     }
     moveSnake()
   }
