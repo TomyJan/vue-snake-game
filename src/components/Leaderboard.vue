@@ -10,9 +10,7 @@
           <button class="btn-sm" @click="onLogout">Logout</button>
         </template>
         <template v-else>
-          <button class="btn-sm btn-login" @click="showLogin = true">
-            🔑 Login to compete
-          </button>
+          <button class="btn-sm btn-login" @click="showLogin = true">🔑 Login to compete</button>
         </template>
       </div>
     </div>
@@ -25,7 +23,11 @@
             <h3>🔑 GitHub Login</h3>
             <p class="login-desc">
               Create a
-              <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">
+              <a
+                href="https://github.com/settings/personal-access-tokens/new"
+                target="_blank"
+                rel="noopener"
+              >
                 Fine-grained Personal Access Token
               </a>
               with these permissions:
