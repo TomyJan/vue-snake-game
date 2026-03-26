@@ -436,7 +436,6 @@ export function useGame() {
     const sn = state.snake
     if (sn.length === 0) return null
     if (sn.length === 1) {
-      // Single segment, just go toward food
       const hx = sn[0].x,
         hy = sn[0].y
       const fx = state.food.pos.x,
@@ -455,38 +454,38 @@ export function useGame() {
       ty = sn[sn.length - 1].y
     const occ = buildOcc()
 
+    // Default target: the tail position (always exclude from occ for pathfinding)
+    // Even if tailFrozen, we want to head that direction
+    const occForTail = new Uint8Array(occ)
+    occForTail[ty * G + tx] = 0 // make tail reachable for BFS
+
     // Can we reach the food?
     const foodDir = bfsFirstStep(hx, hy, fx, fy, occ)
 
-    if (foodDir && !tailFrozen) {
-      // Food is reachable. Is it safe to eat?
-      // Simulate: head moves to food, snake grows, tail stays
+    if (foodDir) {
+      // Simulate eating: head moves to food, snake grows, tail stays
       const dd = DIRECTION_MAP[foodDir]
       const nx = hx + dd.x,
         ny = hy + dd.y
       const simOcc = new Uint8Array(occ)
-      simOcc[ny * G + nx] = 1 // new head (food position)
-      // tail stays (don't remove it)
+      simOcc[ny * G + nx] = 1 // new head at food position
+      // tail stays (don't free it)
       const space = bfsCount(nx, ny, simOcc)
-      // After eating: snake is sn.length + 1
-      // Need at least snake.length + 1 space to survive
       if (space >= sn.length + 1) {
-        // Verify we can still reach the tail after eating
-        const tailDir = bfsFirstStep(nx, ny, tx, ty, simOcc)
-        if (tailDir) {
-          return foodDir
-        }
+        // After eating, verify we can still reach the tail
+        // Use the tail's current position (it hasn't moved)
+        const simOccForTail = new Uint8Array(simOcc)
+        simOccForTail[ty * G + tx] = 0 // make tail reachable
+        const tailDir = bfsFirstStep(nx, ny, tx, ty, simOccForTail)
+        if (tailDir) return foodDir
       }
     }
 
-    // No safe food path → chase the tail
-    // This guarantees we never trap ourselves
-    if (!tailFrozen) {
-      const tailDir = bfsFirstStep(hx, hy, tx, ty, occ)
-      if (tailDir) return tailDir
-    }
+    // Not safe to eat → chase the tail
+    const tailDir = bfsFirstStep(hx, hy, tx, ty, occForTail)
+    if (tailDir) return tailDir
 
-    // Tail unreachable (shouldn't happen normally) → greedy space max
+    // Fallback: greedy max space
     let bestDir: Direction | null = null
     let bestSpace = -1
     for (const d of DIRS) {
