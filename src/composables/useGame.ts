@@ -317,33 +317,16 @@ export function useGame() {
     }
   }
 
-  // ===== AI: Hamiltonian Cycle + BFS Shortcuts =====
-  // The snake follows a serpentine cycle that covers every cell.
-  // This GUARANTEES it never dies. When food is reachable via a safe
-  // BFS shortcut, it takes the shortcut to eat faster.
+  // ===== AI: Greedy Solver (proven algorithm) =====
+  // Reference: github.com/chuyangliu/snake - Greedy Solver
+  // 1. BFS shortest path head -> food. Simulate eating. If head can still
+  //    reach tail after eating -> go eat.
+  // 2. Otherwise, BFS head -> tail. Follow that path (chase tail).
+  // 3. If tail unreachable -> move away from food (survive).
   const DIRS: Direction[] = ['up', 'right', 'down', 'left']
   const G = GAME_CONFIG.gridSize
-  const CYCLE_LEN = G * G
 
-  // Serpentine Hamiltonian cycle:
-  // Row 0: (0,0)→(1,0)→...→(19,0)
-  // Row 1: (19,1)→(18,1)→...→(0,1)
-  // Row 2: (0,2)→...→(19,2)
-  // ...alternating, then back to (0,0)
-  function posToCycleIdx(x: number, y: number): number {
-    if (y % 2 === 0) return y * G + x
-    return y * G + (G - 1 - x)
-  }
-
-  function cycleIdxToPos(idx: number): [number, number] {
-    const y = Math.floor(idx / G)
-    const col = idx % G
-    const x = y % 2 === 0 ? col : G - 1 - col
-    return [x, y]
-  }
-
-  // BFS: find shortest path from (sx,sy) to (tx,ty) avoiding occ
-  // Returns array of [x,y] positions (excluding start), or null
+  // BFS: shortest path from (sx,sy) to (tx,ty) avoiding occupied cells
   function bfsPath(
     sx: number,
     sy: number,
@@ -352,10 +335,11 @@ export function useGame() {
     occ: Uint8Array,
   ): [number, number][] | null {
     if (sx === tx && sy === ty) return []
-    const visited = new Uint8Array(G * G)
-    const prevDir = new Int8Array(G * G).fill(-1)
-    const qx = new Int32Array(G * G)
-    const qy = new Int32Array(G * G)
+    const N = G * G
+    const visited = new Uint8Array(N)
+    const prevDir = new Int8Array(N).fill(-1)
+    const qx = new Int32Array(N)
+    const qy = new Int32Array(N)
     let h = 0,
       t = 0
     visited[sy * G + sx] = 1
@@ -397,11 +381,24 @@ export function useGame() {
     return null
   }
 
-  // Direction from (x1,y1) to (x2,y2) — must be adjacent
-  function dirBetween(x1: number, y1: number, x2: number, y2: number): Direction {
-    if (x2 > x1) return 'right'
-    if (x2 < x1) return 'left'
-    if (y2 > y1) return 'down'
+  // Build occupied array from snake body + obstacles
+  function buildOcc(tailMovable: boolean): Uint8Array {
+    const sn = state.snake
+    const occ = new Uint8Array(G * G)
+    const end = tailMovable ? sn.length - 1 : sn.length
+    for (let i = 1; i < end; i++) {
+      occ[sn[i].y * G + sn[i].x] = 1
+    }
+    for (const o of state.obstacles) {
+      occ[o.y * G + o.x] = 1
+    }
+    return occ
+  }
+
+  function dirFrom(dx: number, dy: number): Direction {
+    if (dx === 1) return 'right'
+    if (dx === -1) return 'left'
+    if (dy === 1) return 'down'
     return 'up'
   }
 
@@ -413,56 +410,80 @@ export function useGame() {
       hy = sn[0].y
     const fx = state.food.pos.x,
       fy = state.food.pos.y
-    const headIdx = posToCycleIdx(hx, hy)
 
-    // Build occupied array: body (exclude head) + obstacles
-    const occ = new Uint8Array(G * G)
-    const bodyEnd = tailFrozen ? sn.length : sn.length - 1
-    for (let i = 1; i < bodyEnd; i++) {
-      occ[sn[i].y * G + sn[i].x] = 1
+    // Step 1: Can we eat the food safely?
+    // Build occupied set including tail (eating means tail stays)
+    // When chasing food, we need to include the tail if just ate
+    if (tailFrozen) {
+      // Tail stays - already included by buildOcc(false)
     }
-    for (const o of state.obstacles) {
-      occ[o.y * G + o.x] = 1
-    }
+    const occForFood = tailFrozen ? buildOcc(false) : buildOcc(true)
+    // Include tail for food path (eating means tail stays)
+    const tx = sn[sn.length - 1].x,
+      ty = sn[sn.length - 1].y
+    const occWithTail = new Uint8Array(occForFood)
+    occWithTail[ty * G + tx] = 1 // include tail for eating simulation
+    const foodPath = bfsPath(hx, hy, fx, fy, occWithTail)
 
-    // Try BFS shortcut to food first
-    const foodPath = bfsPath(hx, hy, fx, fy, occ)
-    if (foodPath && foodPath.length > 0 && foodPath.length <= 10) {
-      // Check all shortcut cells are "ahead" on the cycle (not in body region)
-      let safe = true
+    if (foodPath && foodPath.length > 0) {
+      // Simulate: virtual snake walks foodPath to eat food
+      // Build virtual occupied set: current body + food path positions
+      const vOcc = new Uint8Array(G * G)
+      for (let i = 1; i < sn.length; i++) {
+        vOcc[sn[i].y * G + sn[i].x] = 1
+      }
+      for (const o of state.obstacles) {
+        vOcc[o.y * G + o.x] = 1
+      }
+      // Walk the path: each step adds old head position to body
+      let vHx = hx,
+        vHy = hy
       for (const [px, py] of foodPath) {
-        const pi = posToCycleIdx(px, py)
-        const forwardDist = (pi - headIdx + CYCLE_LEN) % CYCLE_LEN
-        const backwardDist = CYCLE_LEN - forwardDist
-        if (forwardDist > backwardDist || forwardDist <= 0) {
-          safe = false
-          break
-        }
-        if (forwardDist <= sn.length) {
-          safe = false
-          break
-        }
+        vOcc[vHy * G + vHx] = 1 // old head becomes body
+        vHx = px
+        vHy = py
+        // eating: tail stays (don't free anything)
       }
-      if (safe) {
-        const [fx2, fy2] = foodPath[0]
-        return dirBetween(hx, hy, fx2, fy2)
+      // After eating: virtual snake can move (tail will start moving)
+      // Free the tail position
+      vOcc[ty * G + tx] = 0
+      // Can virtual snake head reach its tail?
+      const escape = bfsPath(vHx, vHy, tx, ty, vOcc)
+      if (escape !== null) {
+        // Safe to eat!
+        const [firstX, firstY] = foodPath[0]
+        return dirFrom(firstX - hx, firstY - hy)
       }
     }
 
-    // Follow the Hamiltonian cycle
-    // Try next cell, then skip ahead if blocked
-    for (let offset = 1; offset <= CYCLE_LEN; offset++) {
-      const nextIdx = (headIdx + offset) % CYCLE_LEN
-      const [nx, ny] = cycleIdxToPos(nextIdx)
-      if (occ[ny * G + nx]) continue // blocked by body/obstacle
-      // Skip reverse direction (into neck)
+    // Step 2: Not safe to eat -> chase the tail
+    const occTail = tailFrozen ? buildOcc(false) : buildOcc(true)
+    // Make tail reachable for pathfinding
+    occTail[ty * G + tx] = 0
+    const tailPath = bfsPath(hx, hy, tx, ty, occTail)
+    if (tailPath && tailPath.length > 0) {
+      const [firstX, firstY] = tailPath[0]
+      return dirFrom(firstX - hx, firstY - hy)
+    }
+
+    // Step 3: Last resort - move to safest direction
+    const occ = tailFrozen ? buildOcc(false) : buildOcc(true)
+    let bestDir: Direction | null = null
+    let bestDist = -1
+    for (const d of DIRS) {
+      const dd = DIRECTION_MAP[d]
+      const nx = hx + dd.x,
+        ny = hy + dd.y
+      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
       if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
-      // Found a free cell on the cycle ahead of us
-      return dirBetween(hx, hy, nx, ny)
+      if (occ[ny * G + nx]) continue
+      const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
+      if (dist > bestDist) {
+        bestDist = dist
+        bestDir = d
+      }
     }
-
-    // Should never reach here on a valid board
-    return 'right'
+    return bestDir
   }
 
   // Removed: separate aiInterval timer.
