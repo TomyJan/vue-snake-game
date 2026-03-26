@@ -408,9 +408,9 @@ export function useGame() {
 
       if (eats) {
         // After eating: snake grows by 1, tail stays.
-        // Need TWICE the snake length in reachable space to be safe.
-        // The snake will need room to maneuver around its longer body.
-        if (space >= sn.length * 2) {
+        // Need enough space to survive the longer body.
+        // Snake length + 5 gives comfortable margin for maneuvering.
+        if (space >= sn.length + 5) {
           const score = space * 100 + 50000
           if (score > bestScore || (score === bestScore && dist < bestDist)) {
             bestScore = score
@@ -419,8 +419,8 @@ export function useGame() {
           }
         }
       } else {
-        // Normal move: need at least snake length in reachable space
-        if (space < sn.length) continue
+        // Normal move: need at least a few cells free (very loose check)
+        if (space < 3) continue
 
         // Penalty for moving adjacent to tail:
         // If we're next to the tail and eat food, the tail freezes
