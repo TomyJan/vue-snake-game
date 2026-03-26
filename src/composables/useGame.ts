@@ -37,6 +37,7 @@ export function useGame() {
   let slowBuffTimer: ReturnType<typeof setTimeout> | null = null
   let particleTimer: ReturnType<typeof setInterval> | null = null
   const aiEnabled = ref(false)
+  let aiInterval: ReturnType<typeof setInterval> | null = null
   let tailFrozen = false // true after eating: tail doesn't move next turn
 
   const head = computed(() => state.snake[0])
@@ -75,12 +76,14 @@ export function useGame() {
         state.status = 'playing'
         startGameTimer()
         startParticleTimer()
+        if (aiEnabled.value) startAI()
       }
     }, START_DELAY_MS)
   }
 
   function endGame() {
     clearTimers()
+    stopAI()
     state.status = 'idle'
   }
 
@@ -88,6 +91,7 @@ export function useGame() {
     if (state.status === 'playing') {
       state.status = 'paused'
       stopGameTimer()
+      stopAI()
     }
   }
 
@@ -95,6 +99,7 @@ export function useGame() {
     if (state.status === 'paused') {
       state.status = 'playing'
       startGameTimer()
+      if (aiEnabled.value) startAI()
     }
   }
 
@@ -106,6 +111,7 @@ export function useGame() {
   function gameOver() {
     state.status = 'gameover'
     clearTimers()
+    stopAI()
     if (state.score > highScore.value) {
       highScore.value = state.score
       localStorage.setItem(HIGH_SCORE_KEY, String(state.score))
@@ -152,45 +158,6 @@ export function useGame() {
   }
 
   function moveSnake(): { hit?: boolean; ate?: boolean } {
-    // Safety: if AI direction would cause self-collision, override it
-    if (aiEnabled.value && state.snake.length > 1) {
-      const delta = DIRECTION_MAP[state.nextDirection]
-      const nhx = head.value.x + delta.x
-      const nhy = head.value.y + delta.y
-      const tailIdx = state.snake.length - 1
-      const willHitBody = state.snake.some(
-        (seg, i) => i > 0 && i < tailIdx && seg.x === nhx && seg.y === nhy,
-      )
-      // Also check tail if frozen (tail stays after eating)
-      const willHitTail =
-        tailFrozen &&
-        state.snake[tailIdx].x === nhx &&
-        state.snake[tailIdx].y === nhy
-      if (willHitBody || willHitTail) {
-        // Try all directions to find a safe one
-        for (const d of DIRS) {
-          const dd = DIRECTION_MAP[d]
-          const tx = head.value.x + dd.x,
-            ty = head.value.y + dd.y
-          if (tx < 0 || tx >= GAME_CONFIG.gridSize || ty < 0 || ty >= GAME_CONFIG.gridSize)
-            continue
-          if (tx === state.snake[1].x && ty === state.snake[1].y) continue
-          const hitSeg = state.snake.some(
-            (seg, i) => i > 0 && i < tailIdx && seg.x === tx && seg.y === ty,
-          )
-          const hitTail =
-            tailFrozen &&
-            state.snake[tailIdx].x === tx &&
-            state.snake[tailIdx].y === ty
-          const hitObs = state.obstacles.some((o) => o.x === tx && o.y === ty)
-          if (!hitSeg && !hitTail && !hitObs) {
-            state.nextDirection = d
-            break
-          }
-        }
-      }
-    }
-
     state.direction = state.nextDirection
     const delta = DIRECTION_MAP[state.direction]
     const newHead: Position = {
@@ -226,6 +193,7 @@ export function useGame() {
     state.snake.unshift(newHead)
 
     if (ate) {
+      // Snake grows: tail stays, mark it frozen for next AI check
       tailFrozen = true
       let points = 10
       let color = '#ff4444'
@@ -251,54 +219,11 @@ export function useGame() {
     }
   }
 
-  // ===== Game tick: AI decides direction, then snake moves =====
-  function gameTick() {
-    if (aiEnabled.value) {
-      const dir = computeBestDirection()
-      if (dir) {
-        state.nextDirection = dir
-      } else {
-        // AI found no safe direction — try to find ANY non-collision direction
-        const sn = state.snake
-        if (sn.length > 0) {
-          const hx = sn[0].x,
-            hy = sn[0].y
-          for (const d of DIRS) {
-            const dd = DIRECTION_MAP[d]
-            const nx = hx + dd.x,
-              ny = hy + dd.y
-            if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-            if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
-            const blocked = tailFrozen ? sn.length : sn.length - 1
-            let hit = false
-            for (let i = 1; i < blocked; i++) {
-              if (sn[i].x === nx && sn[i].y === ny) {
-                hit = true
-                break
-              }
-            }
-            if (!hit) {
-              for (const o of state.obstacles) {
-                if (o.x === nx && o.y === ny) {
-                  hit = true
-                  break
-                }
-              }
-            }
-            if (!hit) {
-              state.nextDirection = d
-              break
-            }
-          }
-        }
-      }
-    }
-    moveSnake()
-  }
-
   function startGameTimer() {
     stopGameTimer()
-    gameTimer = setInterval(gameTick, state.speed)
+    gameTimer = setInterval(() => {
+      moveSnake()
+    }, state.speed)
   }
 
   function stopGameTimer() {
@@ -356,180 +281,126 @@ export function useGame() {
     }
   }
 
-  // ===== AI: Greedy Solver (proven algorithm) =====
-  // Reference: github.com/chuyangliu/snake - Greedy Solver
-  // 1. BFS shortest path head -> food. Simulate eating. If head can still
-  //    reach tail after eating -> go eat.
-  // 2. Otherwise, BFS head -> tail. Follow that path (chase tail).
-  // 3. If tail unreachable -> move away from food (survive).
-  const DIRS: Direction[] = ['up', 'right', 'down', 'left']
+  // ===== AI =====
+  const AI_DIRS: Direction[] = ['up', 'right', 'down', 'left']
   const G = GAME_CONFIG.gridSize
 
-  // BFS: shortest path from (sx,sy) to (tx,ty) avoiding occupied cells
-  function bfsPath(
-    sx: number,
-    sy: number,
-    tx: number,
-    ty: number,
-    occ: Uint8Array,
-  ): [number, number][] | null {
-    if (sx === tx && sy === ty) return []
-    const N = G * G
-    const visited = new Uint8Array(N)
-    const prevDir = new Int8Array(N).fill(-1)
-    const qx = new Int32Array(N)
-    const qy = new Int32Array(N)
-    let h = 0,
-      t = 0
-    visited[sy * G + sx] = 1
-    qx[t] = sx
-    qy[t] = sy
-    t++
-    while (h < t) {
-      const cx = qx[h],
-        cy = qy[h]
-      h++
-      if (cx === tx && cy === ty) {
-        const path: [number, number][] = []
-        let px = tx,
-          py = ty
-        while (px !== sx || py !== sy) {
-          path.push([px, py])
-          const pd = prevDir[py * G + px]
-          const dd = DIRECTION_MAP[DIRS[pd]]
-          px -= dd.x
-          py -= dd.y
-        }
-        path.reverse()
-        return path
-      }
-      for (let di = 0; di < 4; di++) {
-        const dd = DIRECTION_MAP[DIRS[di]]
+  function key(x: number, y: number): string {
+    return `${x},${y}`
+  }
+  function inB(x: number, y: number): boolean {
+    return x >= 0 && x < G && y >= 0 && y < G
+  }
+
+  function floodCount(sx: number, sy: number, blocked: Set<string>): number {
+    const vis = new Set<string>()
+    const qx: number[] = [sx]
+    const qy: number[] = [sy]
+    vis.add(key(sx, sy))
+    let head2 = 0
+    while (head2 < qx.length) {
+      const cx = qx[head2],
+        cy = qy[head2]
+      head2++
+      for (const d of AI_DIRS) {
+        const dd = DIRECTION_MAP[d]
         const nx = cx + dd.x,
           ny = cy + dd.y
-        if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-        const idx = ny * G + nx
-        if (visited[idx] || occ[idx]) continue
-        visited[idx] = 1
-        prevDir[idx] = di
-        qx[t] = nx
-        qy[t] = ny
-        t++
+        const k = key(nx, ny)
+        if (!inB(nx, ny) || blocked.has(k) || vis.has(k)) continue
+        vis.add(k)
+        qx.push(nx)
+        qy.push(ny)
       }
     }
-    return null
+    return vis.size
   }
 
-  // Build occupied array from snake body + obstacles
-  function buildOcc(tailMovable: boolean): Uint8Array {
-    const sn = state.snake
-    const occ = new Uint8Array(G * G)
-    const end = tailMovable ? sn.length - 1 : sn.length
-    for (let i = 1; i < end; i++) {
-      occ[sn[i].y * G + sn[i].x] = 1
+  function findSafeDirection(): Direction {
+    const hp = head.value
+    if (!hp) return 'right'
+
+    // Build blocked set: body (skip head at [0]) + obstacles
+    // After eating (tailFrozen), include tail too
+    const blocked = new Set<string>()
+    const excludeTail = !tailFrozen
+    const bodyEnd = excludeTail ? state.snake.length - 1 : state.snake.length
+    for (let i = 1; i < bodyEnd; i++) {
+      blocked.add(key(state.snake[i].x, state.snake[i].y))
     }
-    for (const o of state.obstacles) {
-      occ[o.y * G + o.x] = 1
-    }
-    return occ
-  }
+    for (const o of state.obstacles) blocked.add(key(o.x, o.y))
 
-  function dirFrom(dx: number, dy: number): Direction {
-    if (dx === 1) return 'right'
-    if (dx === -1) return 'left'
-    if (dy === 1) return 'down'
-    return 'up'
-  }
-
-  function computeBestDirection(): Direction | null {
-    const sn = state.snake
-    if (sn.length === 0) return null
-
-    const hx = sn[0].x,
-      hy = sn[0].y
+    const hx = hp.x,
+      hy = hp.y
     const fx = state.food.pos.x,
       fy = state.food.pos.y
+    const tail = state.snake[state.snake.length - 1]
 
-    // Step 1: Can we eat the food safely?
-    // Build occupied set including tail (eating means tail stays)
-    // When chasing food, we need to include the tail if just ate
-    if (tailFrozen) {
-      // Tail stays - already included by buildOcc(false)
-    }
-    const occForFood = tailFrozen ? buildOcc(false) : buildOcc(true)
-    // Include tail for food path (eating means tail stays)
-    const tx = sn[sn.length - 1].x,
-      ty = sn[sn.length - 1].y
-    const occWithTail = new Uint8Array(occForFood)
-    occWithTail[ty * G + tx] = 1 // include tail for eating simulation
-    const foodPath = bfsPath(hx, hy, fx, fy, occWithTail)
+    let bestDir: Direction = state.direction
+    let bestScore = -Infinity
 
-    if (foodPath && foodPath.length > 0) {
-      // Simulate: virtual snake walks foodPath to eat food
-      // Build virtual occupied set: current body + food path positions
-      const vOcc = new Uint8Array(G * G)
-      for (let i = 1; i < sn.length; i++) {
-        vOcc[sn[i].y * G + sn[i].x] = 1
-      }
-      for (const o of state.obstacles) {
-        vOcc[o.y * G + o.x] = 1
-      }
-      // Walk the path: each step adds old head position to body
-      let vHx = hx,
-        vHy = hy
-      for (const [px, py] of foodPath) {
-        vOcc[vHy * G + vHx] = 1 // old head becomes body
-        vHx = px
-        vHy = py
-        // eating: tail stays (don't free anything)
-      }
-      // After eating: virtual snake can move (tail will start moving)
-      // Free the tail position
-      vOcc[ty * G + tx] = 0
-      // Can virtual snake head reach its tail?
-      const escape = bfsPath(vHx, vHy, tx, ty, vOcc)
-      if (escape !== null) {
-        // Safe to eat!
-        const [firstX, firstY] = foodPath[0]
-        return dirFrom(firstX - hx, firstY - hy)
-      }
-    }
-
-    // Step 2: Not safe to eat -> chase the tail
-    const occTail = tailFrozen ? buildOcc(false) : buildOcc(true)
-    // Make tail reachable for pathfinding
-    occTail[ty * G + tx] = 0
-    const tailPath = bfsPath(hx, hy, tx, ty, occTail)
-    if (tailPath && tailPath.length > 0) {
-      const [firstX, firstY] = tailPath[0]
-      return dirFrom(firstX - hx, firstY - hy)
-    }
-
-    // Step 3: Last resort - move to safest direction
-    const occ = tailFrozen ? buildOcc(false) : buildOcc(true)
-    let bestDir: Direction | null = null
-    let bestDist = -1
-    for (const d of DIRS) {
+    for (const d of AI_DIRS) {
       const dd = DIRECTION_MAP[d]
       const nx = hx + dd.x,
         ny = hy + dd.y
-      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-      if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
-      if (occ[ny * G + nx]) continue
-      const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
-      if (dist > bestDist) {
-        bestDist = dist
+
+      // Skip if out of bounds or blocked
+      if (!inB(nx, ny) || blocked.has(key(nx, ny))) continue
+
+      // Skip reverse direction
+      if (state.snake.length > 1 && nx === state.snake[1].x && ny === state.snake[1].y) continue
+
+      let score: number
+
+      if (nx === fx && ny === fy) {
+        // Eating food: snake grows, tail stays → blocked includes tail
+        const afterEat = new Set(blocked)
+        afterEat.add(key(nx, ny))
+        const space = floodCount(nx, ny, afterEat)
+        // Only eat if we have enough room
+        score = space > state.snake.length + 3 ? space * 100 + 5000 : -10000
+      } else {
+        // Normal move: tail gets freed
+        const afterMove = new Set(blocked)
+        afterMove.delete(key(tail.x, tail.y))
+        afterMove.add(key(nx, ny))
+        const space = floodCount(nx, ny, afterMove)
+        // Prefer more space, prefer closer to food
+        const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
+        score = space * 100 - dist
+      }
+
+      if (score > bestScore) {
+        bestScore = score
         bestDir = d
       }
     }
+
     return bestDir
   }
 
-  // Removed: separate aiInterval timer.
-  // AI decisions are now integrated into gameTick() above.
+  function aiTick() {
+    if (state.status !== 'playing') return
+    setDirection(findSafeDirection())
+  }
+
+  function startAI() {
+    stopAI()
+    aiEnabled.value = true
+    aiInterval = setInterval(aiTick, 30)
+  }
+
+  function stopAI() {
+    if (aiInterval) {
+      clearInterval(aiInterval)
+      aiInterval = null
+    }
+  }
 
   function toggleAI() {
     aiEnabled.value = !aiEnabled.value
+    if (aiEnabled.value && state.status === 'playing') startAI()
+    else stopAI()
   }
 
   function setSpeed(speed: number) {
@@ -539,6 +410,7 @@ export function useGame() {
 
   onUnmounted(() => {
     clearTimers()
+    stopAI()
   })
 
   return {
