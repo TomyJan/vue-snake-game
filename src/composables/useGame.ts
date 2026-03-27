@@ -337,12 +337,25 @@ export function useGame() {
       simOcc[ny * G + nx] = 1 // new head
       if (!eats) simOcc[ty * G + tx] = 0 // tail moves away
 
-      // Safety check differs for eating vs non-eating
+      // Safety check
       let safe = false
       if (eats) {
-        // After eating: check head can reach tail (same as non-eating)
+        // After eating: reach tail AND enough space for longer snake
         simOcc[ty * G + tx] = 0
         safe = canReach(nx, ny, tx, ty, simOcc)
+        if (safe) {
+          // Count reachable space - need room for the longer snake
+          const vis = new Uint8Array(G * G)
+          const qx = new Int32Array(G * G), qy = new Int32Array(G * G)
+          let h2 = 0, t2 = 0; vis[ny * G + nx] = 1; qx[t2] = nx; qy[t2] = ny; t2++
+          let cnt = 1
+          while (h2 < t2) { const cx = qx[h2], cy = qy[h2]; h2++
+            for (let d = 0; d < 4; d++) { const nnx = cx + DX[d], nny = cy + DY[d]
+              if (nnx < 0 || nnx >= G || nny < 0 || nny >= G) continue
+              const idx = nny * G + nnx; if (vis[idx] || simOcc[idx]) continue
+              vis[idx] = 1; qx[t2] = nnx; qy[t2] = nny; t2++; cnt++ } }
+          if (cnt < sn.length + 3) safe = false
+        }
       } else {
         // Non-eating: check head can reach tail
         simOcc[ty * G + tx] = 0
