@@ -357,9 +357,12 @@ export function useGame() {
           if (cnt < sn.length + 3) safe = false
         }
       } else {
-        // Non-eating: check head can reach tail
-        simOcc[ty * G + tx] = 0
-        safe = canReach(nx, ny, tx, ty, simOcc)
+        // Non-eating: tail moves to sn[length-2] position
+        // Check head can reach the NEW tail position
+        simOcc[ty * G + tx] = 0 // old tail freed
+        const newTx = sn.length > 2 ? sn[sn.length - 2].x : nx
+        const newTy = sn.length > 2 ? sn[sn.length - 2].y : ny
+        safe = canReach(nx, ny, newTx, newTy, simOcc)
       }
 
       if (safe) {
