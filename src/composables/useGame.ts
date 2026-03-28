@@ -358,11 +358,12 @@ export function useGame() {
         }
       } else {
         // Non-eating: tail moves to sn[length-2] position
-        // Check head can reach the NEW tail position
+        // Must exclude NEW tail from occ for pathfinding
         simOcc[ty * G + tx] = 0 // old tail freed
-        const newTx = sn.length > 2 ? sn[sn.length - 2].x : nx
-        const newTy = sn.length > 2 ? sn[sn.length - 2].y : ny
-        safe = canReach(nx, ny, newTx, newTy, simOcc)
+        if (sn.length > 2) {
+          simOcc[sn[sn.length - 2].y * G + sn[sn.length - 2].x] = 0 // new tail freed
+        }
+        safe = canReach(nx, ny, tx, ty, simOcc)
       }
 
       if (safe) {
