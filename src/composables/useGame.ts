@@ -357,13 +357,18 @@ export function useGame() {
           if (cnt < sn.length + 3) safe = false
         }
       } else {
-        // Non-eating: tail moves to sn[length-2] position
-        // Must exclude NEW tail from occ for pathfinding
+        // Non-eating: check reachable space (not tail reachability - too restrictive for long snakes)
         simOcc[ty * G + tx] = 0 // old tail freed
-        if (sn.length > 2) {
-          simOcc[sn[sn.length - 2].y * G + sn[sn.length - 2].x] = 0 // new tail freed
-        }
-        safe = canReach(nx, ny, tx, ty, simOcc)
+        const vis = new Uint8Array(G * G)
+        const qx = new Int32Array(G * G), qy = new Int32Array(G * G)
+        let h2 = 0, t2 = 0; vis[ny * G + nx] = 1; qx[t2] = nx; qy[t2] = ny; t2++
+        let cnt = 1
+        while (h2 < t2) { const cx = qx[h2], cy = qy[h2]; h2++
+          for (let d = 0; d < 4; d++) { const nnx = cx + DX[d], nny = cy + DY[d]
+            if (nnx < 0 || nnx >= G || nny < 0 || nny >= G) continue
+            const idx = nny * G + nnx; if (vis[idx] || simOcc[idx]) continue
+            vis[idx] = 1; qx[t2] = nnx; qy[t2] = nny; t2++; cnt++ } }
+        safe = cnt >= sn.length
       }
 
       if (safe) {
