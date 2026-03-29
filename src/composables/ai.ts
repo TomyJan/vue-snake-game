@@ -72,24 +72,35 @@ export function findSafeDirection(
     // Score
     let score = 0
 
-    // Eating is great if safe
-    if (eats && space >= nextLen) {
-      score += 10000000 // Always eat if we have room
+    // Eating: be more conservative as snake gets longer
+    // Need proportionally more space for longer snakes
+    const safetyMargin = Math.max(nextLen * 1.5, 30) // At least 30 cells margin
+    if (eats && space >= nextLen + safetyMargin) {
+      score += 10000000 // Very safe to eat
+    } else if (eats && space >= nextLen * 2) {
+      score += 1000000 // Safe to eat
     } else if (eats) {
-      score -= 1000000 // Very dangerous to eat with no room
+      // Too dangerous to eat - snake would trap itself
+      score -= 10000000
     }
 
-    // Prefer moving toward food (strong preference)
+    // Prefer moving toward food (when safe)
     const foodDist = Math.abs(nx - fx) + Math.abs(ny - fy)
-    score -= foodDist * 50
+    if (space >= nextLen * 2) {
+      score -= foodDist * 100 // Pursue food when we have room
+    } else {
+      score -= foodDist * 10 // Mild preference when tight
+    }
 
-    // Prefer more space (survival)
-    score += space * 3
+    // Prefer more space (survival is priority)
+    score += space * 5
 
-    // Follow tail only when space is critically tight
-    if (space < nextLen * 2) {
-      const tailDist = Math.abs(nx - tx) + Math.abs(ny - ty)
-      score -= tailDist * 40 // Follow tail to escape tight spots
+    // Follow tail to maintain safe loop pattern
+    const tailDist = Math.abs(nx - tx) + Math.abs(ny - ty)
+    if (space < nextLen * 3) {
+      score -= tailDist * 50 // Strong tail following when space is limited
+    } else {
+      score -= tailDist * 10 // Mild tail following when safe
     }
 
     if (score > bestScore) {

@@ -1,4 +1,3 @@
-// Snake AI Benchmark - exact copy of ai.ts logic
 const G = 20;
 const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
 const dirs = ['up', 'right', 'down', 'left'];
@@ -51,11 +50,15 @@ function findSafeDirection(snake, food, tailFrozen) {
     if (space < nextLen) continue;
 
     let score = 0;
-    if (eats && space >= nextLen) score += 10000000;
-    else if (eats) score -= 1000000;
-    score -= (Math.abs(nx - fx) + Math.abs(ny - fy)) * 50;
-    score += space * 3;
-    if (space < nextLen * 2) score -= (Math.abs(nx - tx) + Math.abs(ny - ty)) * 40;
+    const safetyMargin = Math.max(nextLen * 1.5, 30);
+    if (eats && space >= nextLen + safetyMargin) score += 10000000;
+    else if (eats && space >= nextLen * 2) score += 1000000;
+    else if (eats) score -= 10000000;
+    if (space >= nextLen * 2) score -= (Math.abs(nx - fx) + Math.abs(ny - fy)) * 100;
+    else score -= (Math.abs(nx - fx) + Math.abs(ny - fy)) * 10;
+    score += space * 5;
+    if (space < nextLen * 3) score -= (Math.abs(nx - tx) + Math.abs(ny - ty)) * 50;
+    else score -= (Math.abs(nx - tx) + Math.abs(ny - ty)) * 10;
 
     if (score > bestScore) { bestScore = score; bestDir = dirs[di]; }
   }

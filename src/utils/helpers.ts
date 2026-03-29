@@ -82,34 +82,40 @@ export function generateObstacles(
   count: number,
 ): Position[] {
   const G = gridSize
-  const cx = Math.floor(G / 2)
-  const cy = Math.floor(G / 2)
 
-  // Build exclude list for obstacle PLACEMENT: snake, food, center safe zone
-  const exclude: Position[] = [...snake, food]
-  for (let dx = -3; dx <= 3; dx++) {
-    for (let dy = -3; dy <= 3; dy++) {
-      const nx = cx + dx, ny = cy + dy
-      if (nx >= 0 && nx < G && ny >= 0 && ny < G) {
-        exclude.push({ x: nx, y: ny })
-      }
-    }
-  }
+  // Keep edges clear (snake needs room to navigate around obstacles)
+  const EDGE_MARGIN = 2
 
   const obstacles: Position[] = []
-  // Minimum open cells required (at least 50% of grid)
-  const minOpen = Math.floor(G * G * 0.5)
+  // Require 75% of grid to be open
+  const minOpen = Math.floor(G * G * 0.75)
 
   for (let i = 0; i < count; i++) {
     let placed = false
-    for (let attempt = 0; attempt < 50; attempt++) {
-      const pos = randomPosition(G, [...exclude, ...obstacles])
+    for (let attempt = 0; attempt < 100; attempt++) {
+      // Random position, avoiding edges
+      const x = EDGE_MARGIN + Math.floor(Math.random() * (G - 2 * EDGE_MARGIN))
+      const y = EDGE_MARGIN + Math.floor(Math.random() * (G - 2 * EDGE_MARGIN))
+      const pos = { x, y }
 
-      // Build blocked grid to test (food is NOT blocked - snake can reach it)
+      // Skip if too close to snake or food
+      let tooClose = false
+      for (const s of snake) {
+        if (Math.abs(s.x - x) + Math.abs(s.y - y) < 3) { tooClose = true; break }
+      }
+      if (Math.abs(food.x - x) + Math.abs(food.y - y) < 3) tooClose = true
+      if (tooClose) continue
+
+      // Skip if too close to existing obstacles (avoid walls)
+      let tooCloseToObs = false
+      for (const o of obstacles) {
+        if (Math.abs(o.x - x) + Math.abs(o.y - y) < 2) { tooCloseToObs = true; break }
+      }
+      if (tooCloseToObs) continue
+
+      // Build blocked grid to test
       const blocked = new Uint8Array(G * G)
-      // Block snake body EXCEPT head
       for (let si = 1; si < snake.length; si++) blocked[snake[si].y * G + snake[si].x] = 1
-      // Block existing obstacles + new candidate
       for (const o of obstacles) blocked[o.y * G + o.x] = 1
       blocked[pos.y * G + pos.x] = 1
 
