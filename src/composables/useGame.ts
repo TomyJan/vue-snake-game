@@ -280,6 +280,7 @@ export function useGame() {
     const G = GAME_CONFIG.gridSize
     const hx = sn[0].x, hy = sn[0].y
     const fx = state.food.pos.x, fy = state.food.pos.y
+    const tx = sn[sn.length - 1].x, ty = sn[sn.length - 1].y
     const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
     const dirs: Direction[] = ['up', 'right', 'down', 'left']
 
@@ -289,102 +290,71 @@ export function useGame() {
     for (let i = 0; i < bodyEnd; i++) blocked[sn[i].y * G + sn[i].x] = 1
     for (const o of state.obstacles) blocked[o.y * G + o.x] = 1
 
-    // Current reachable space
-    const currentSpace = floodFill(blocked, hx, hy)
-
-    interface DirScore { dir: Direction; score: number; space: number; dist: number }
-    const candidates: DirScore[] = []
+    // Evaluate each direction
+    let bestDir: Direction = state.direction
+    let bestScore = -Infinity
 
     for (let di = 0; di < 4; di++) {
       const nx = hx + DX[di], ny = hy + DY[di]
-      // Skip walls
       if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-      // Skip reverse (into neck)
       if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
-      // Skip blocked
       if (blocked[ny * G + nx]) continue
 
       const eats = nx === fx && ny === fy
+      const nextLen = eats ? sn.length + 1 : sn.length
 
-      // Simulate move: what the board looks like after the move
+      // Simulate board after move
       const simBlocked = new Uint8Array(blocked)
-      // Don't block new head - it's the starting point for flood fill
-      if (!eats) {
-        // Tail moves away (free it)
-        const tailIdx = sn.length - 1
-        simBlocked[sn[tailIdx].y * G + sn[tailIdx].x] = 0
-      }
-      // Block old body cells that are still there (head moves, rest follows)
-      // The new head is NOT blocked - it's where we start the flood fill
+      if (!eats) simBlocked[ty * G + tx] = 0 // tail frees
 
-      // After eating: snake is 1 longer, need more space
-      const simLen = eats ? sn.length + 1 : sn.length
-
-      // Count reachable space from new head position
+      // Count reachable space from new head
       const space = floodFill(simBlocked, nx, ny)
 
-      // Must have enough space for the snake
-      if (space < simLen) continue
+      // Must have enough space
+      if (space < nextLen) continue
 
-      const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
-      candidates.push({ dir: dirs[di], score: 0, space, dist })
+      // Score this move
+      let score = 0
+
+      // Eating: only if we have plenty of space (2x snake length)
+      if (eats) {
+        if (space >= nextLen * 2) {
+          score += 100000 // Safe to eat
+        } else {
+          score -= 50000 // Dangerous to eat (tight space)
+        }
+      }
+
+      // Prefer moving toward food (Manhattan distance)
+      const foodDist = Math.abs(nx - fx) + Math.abs(ny - fy)
+      score -= foodDist * 3
+
+      // More space is better
+      score += space * 2
+
+      // When space is tight, follow tail
+      if (space < nextLen * 3) {
+        const tailDist = Math.abs(nx - tx) + Math.abs(ny - ty)
+        score += (G - tailDist) * 30
+      }
+
+      if (score > bestScore) {
+        bestScore = score
+        bestDir = dirs[di]
+      }
     }
 
-    if (candidates.length === 0) {
-      // No safe move: emergency - pick any valid direction
+    // Emergency fallback
+    if (bestScore === -Infinity) {
       for (let di = 0; di < 4; di++) {
         const nx = hx + DX[di], ny = hy + DY[di]
         if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
         if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
         if (!blocked[ny * G + nx]) return dirs[di]
       }
-      return state.direction
     }
 
-    // Score each candidate
-    for (const c of candidates) {
-      const nx = hx + DX[dirs.indexOf(c.dir)], ny = hy + DY[dirs.indexOf(c.dir)]
-      const eats = nx === fx && ny === fy
-      const simLen = eats ? sn.length + 1 : sn.length
-
-      // Space score: prefer more space (survival first)
-      let spaceScore = c.space
-
-      // If space is tight (< 2x snake length), heavily prioritize space
-      if (c.space < simLen * 2) {
-        spaceScore = c.space * 100
-      }
-
-      // Food score: only pursue if safe
-      let foodScore = 0
-      if (eats) {
-        // Always take food if we have enough space
-        if (c.space >= simLen * 2) {
-          foodScore = 10000
-        } else {
-          // Tight space: still take food but with lower priority
-          foodScore = 1000
-        }
-      } else {
-        // Prefer moving toward food when not eating
-        foodScore = (currentSpace - c.dist) * 0.5
-      }
-
-      // Follow-tail bonus: when space is limited, prefer moving toward tail
-      // This creates a safe "loop" pattern
-      if (c.space < simLen * 3 && sn.length > 3) {
-        const tx = sn[sn.length - 1].x, ty = sn[sn.length - 1].y
-        const tailDist = Math.abs(nx - tx) + Math.abs(ny - ty)
-        // Closer to tail = better when space is tight
-        spaceScore += (20 - tailDist) * 50
-      }
-
-      c.score = spaceScore + foodScore
-    }
-
-    // Pick best
-    candidates.sort((a, b) => b.score - a.score)
-    return candidates[0].dir
+    return bestDir
   }
 
 
