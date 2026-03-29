@@ -2,6 +2,7 @@ import { ref, reactive, computed, onUnmounted } from 'vue'
 import type { GameState, Direction, Position, Food } from '../types/game'
 import { GAME_CONFIG, DIRECTION_MAP, OPPOSITE_DIRECTION, KEY_DIRECTION_MAP, OBSTACLE_COUNT } from '../utils/constants'
 import { positionsEqual, spawnFood, generateObstacles } from '../utils/helpers'
+import { findSafeDirection } from './ai'
 
 const HIGH_SCORE_KEY = 'snake-high-score'
 const START_DELAY_MS = 800
@@ -204,7 +205,10 @@ export function useGame() {
   function startGameTimer() {
     stopGameTimer()
     gameTimer = setInterval(() => {
-      if (aiEnabled.value) { const dir = findSafeDirection(); if (dir) state.nextDirection = dir }
+      if (aiEnabled.value) {
+        const dir = findSafeDirection(state.snake, state.food.pos, state.obstacles, tailFrozen)
+        if (dir) state.nextDirection = dir
+      }
       moveSnake()
     }, state.speed)
   }
@@ -249,114 +253,8 @@ export function useGame() {
     }
   }
 
-  // ===== AI =====
 
-  // Flood fill: count reachable cells from (sx, sy) avoiding blocked cells
-  function floodFill(blocked: Uint8Array, sx: number, sy: number): number {
-    const G = GAME_CONFIG.gridSize
-    const vis = new Uint8Array(G * G)
-    const qx = new Int32Array(G * G), qy = new Int32Array(G * G)
-    let h = 0, t = 0
-    const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
-    if (blocked[sy * G + sx]) return 0
-    vis[sy * G + sx] = 1; qx[t] = sx; qy[t] = sy; t++
-    let cnt = 1
-    while (h < t) {
-      const cx = qx[h], cy = qy[h]; h++
-      for (let d = 0; d < 4; d++) {
-        const nx = cx + DX[d], ny = cy + DY[d]
-        if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-        const idx = ny * G + nx
-        if (vis[idx] || blocked[idx]) continue
-        vis[idx] = 1; qx[t] = nx; qy[t] = ny; t++; cnt++
-      }
-    }
-    return cnt
-  }
-
-  function findSafeDirection(): Direction {
-    const sn = state.snake
-    if (sn.length === 0) return 'right'
-    const G = GAME_CONFIG.gridSize
-    const hx = sn[0].x, hy = sn[0].y
-    const fx = state.food.pos.x, fy = state.food.pos.y
-    const tx = sn[sn.length - 1].x, ty = sn[sn.length - 1].y
-    const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
-    const dirs: Direction[] = ['up', 'right', 'down', 'left']
-
-    // Build blocked grid: body + obstacles
-    const blocked = new Uint8Array(G * G)
-    const bodyEnd = tailFrozen ? sn.length : sn.length - 1
-    for (let i = 0; i < bodyEnd; i++) blocked[sn[i].y * G + sn[i].x] = 1
-    for (const o of state.obstacles) blocked[o.y * G + o.x] = 1
-
-    // Evaluate each direction
-    let bestDir: Direction = state.direction
-    let bestScore = -Infinity
-
-    for (let di = 0; di < 4; di++) {
-      const nx = hx + DX[di], ny = hy + DY[di]
-      if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-      if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
-      if (blocked[ny * G + nx]) continue
-
-      const eats = nx === fx && ny === fy
-      const nextLen = eats ? sn.length + 1 : sn.length
-
-      // Simulate board after move
-      const simBlocked = new Uint8Array(blocked)
-      if (!eats) simBlocked[ty * G + tx] = 0 // tail frees
-
-      // Count reachable space from new head
-      const space = floodFill(simBlocked, nx, ny)
-
-      // Must have enough space
-      if (space < nextLen) continue
-
-      // Score this move
-      let score = 0
-
-      // Eating: only if we have plenty of space (2x snake length)
-      if (eats) {
-        if (space >= nextLen * 2) {
-          score += 100000 // Safe to eat
-        } else {
-          score -= 50000 // Dangerous to eat (tight space)
-        }
-      }
-
-      // Prefer moving toward food (Manhattan distance)
-      const foodDist = Math.abs(nx - fx) + Math.abs(ny - fy)
-      score -= foodDist * 3
-
-      // More space is better
-      score += space * 2
-
-      // When space is tight, follow tail
-      if (space < nextLen * 3) {
-        const tailDist = Math.abs(nx - tx) + Math.abs(ny - ty)
-        score += (G - tailDist) * 30
-      }
-
-      if (score > bestScore) {
-        bestScore = score
-        bestDir = dirs[di]
-      }
-    }
-
-    // Emergency fallback
-    if (bestScore === -Infinity) {
-      for (let di = 0; di < 4; di++) {
-        const nx = hx + DX[di], ny = hy + DY[di]
-        if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-        if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
-        if (!blocked[ny * G + nx]) return dirs[di]
-      }
-    }
-
-    return bestDir
-  }
-
+  // ===== AI ===== (imported from ai.ts)
 
   function toggleAI() { aiEnabled.value = !aiEnabled.value }
 
