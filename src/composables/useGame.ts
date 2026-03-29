@@ -141,36 +141,6 @@ export function useGame() {
   }
 
   function moveSnake(): { hit?: boolean; ate?: boolean } {
-    // Failsafe: if next direction leads to body, try other directions
-    if (aiEnabled.value && state.snake.length > 1) {
-      const delta = DIRECTION_MAP[state.nextDirection]
-      const nhx = head.value.x + delta.x
-      const nhy = head.value.y + delta.y
-      const hitBody = state.snake.some((seg, i) => {
-        if (i === 0) return false // head itself
-        if (i === state.snake.length - 1 && !tailFrozen) return false // tail moves away
-        return seg.x === nhx && seg.y === nhy
-      })
-      if (hitBody || nhx < 0 || nhx >= GAME_CONFIG.gridSize || nhy < 0 || nhy >= GAME_CONFIG.gridSize) {
-        // Try all 4 directions
-        const allDirs: Direction[] = ['up', 'right', 'down', 'left']
-        const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
-        for (let di = 0; di < 4; di++) {
-          const tx = head.value.x + DX[di], ty = head.value.y + DY[di]
-          if (tx < 0 || tx >= GAME_CONFIG.gridSize || ty < 0 || ty >= GAME_CONFIG.gridSize) continue
-          if (tx === state.snake[1].x && ty === state.snake[1].y) continue
-          const hit = state.snake.some((seg, i) => {
-            if (i === 0) return false
-            if (i === state.snake.length - 1 && !tailFrozen) return false
-            return seg.x === tx && seg.y === ty
-          })
-          if (!hit && !state.obstacles.some(o => o.x === tx && o.y === ty)) {
-            state.nextDirection = allDirs[di]
-            break
-          }
-        }
-      }
-    }
     state.direction = state.nextDirection
     const delta = DIRECTION_MAP[state.direction]
     const newHead: Position = {
@@ -281,45 +251,49 @@ export function useGame() {
 
   // ===== AI =====
 
+  // Flood fill: count reachable cells from (sx, sy) avoiding blocked cells
+  function floodFill(blocked: Uint8Array, sx: number, sy: number): number {
+    const G = GAME_CONFIG.gridSize
+    const vis = new Uint8Array(G * G)
+    const qx = new Int32Array(G * G), qy = new Int32Array(G * G)
+    let h = 0, t = 0
+    const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
+    if (blocked[sy * G + sx]) return 0
+    vis[sy * G + sx] = 1; qx[t] = sx; qy[t] = sy; t++
+    let cnt = 1
+    while (h < t) {
+      const cx = qx[h], cy = qy[h]; h++
+      for (let d = 0; d < 4; d++) {
+        const nx = cx + DX[d], ny = cy + DY[d]
+        if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+        const idx = ny * G + nx
+        if (vis[idx] || blocked[idx]) continue
+        vis[idx] = 1; qx[t] = nx; qy[t] = ny; t++; cnt++
+      }
+    }
+    return cnt
+  }
+
   function findSafeDirection(): Direction {
     const sn = state.snake
     if (sn.length === 0) return 'right'
     const G = GAME_CONFIG.gridSize
     const hx = sn[0].x, hy = sn[0].y
     const fx = state.food.pos.x, fy = state.food.pos.y
-    const tx = sn[sn.length - 1].x, ty = sn[sn.length - 1].y
     const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0]
     const dirs: Direction[] = ['up', 'right', 'down', 'left']
 
-    // Build occupied grid: ALL body (including head) + obstacles
-    const occ = new Uint8Array(G * G)
+    // Build blocked grid: body + obstacles
+    const blocked = new Uint8Array(G * G)
     const bodyEnd = tailFrozen ? sn.length : sn.length - 1
-    for (let i = 0; i < bodyEnd; i++) occ[sn[i].y * G + sn[i].x] = 1
-    for (const o of state.obstacles) occ[o.y * G + o.x] = 1
+    for (let i = 0; i < bodyEnd; i++) blocked[sn[i].y * G + sn[i].x] = 1
+    for (const o of state.obstacles) blocked[o.y * G + o.x] = 1
 
-    // BFS: can (sx,sy) reach (tx,ty) avoiding occupied cells?
-    function canReach(sx: number, sy: number, txx: number, tyy: number, o: Uint8Array): boolean {
-      if (sx === txx && sy === tyy) return true
-      const vis = new Uint8Array(G * G)
-      const qx = new Int32Array(G * G), qy = new Int32Array(G * G)
-      let h = 0, t = 0
-      vis[sy * G + sx] = 1; qx[t] = sx; qy[t] = sy; t++
-      while (h < t) {
-        const cx = qx[h], cy = qy[h]; h++
-        for (let di = 0; di < 4; di++) {
-          const nx = cx + DX[di], ny = cy + DY[di]
-          if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-          const idx = ny * G + nx
-          if (vis[idx] || o[idx]) continue
-          if (nx === txx && ny === tyy) return true
-          vis[idx] = 1; qx[t] = nx; qy[t] = ny; t++
-        }
-      }
-      return false
-    }
+    // Current reachable space
+    const currentSpace = floodFill(blocked, hx, hy)
 
-    let bestDir: Direction = state.direction
-    let bestScore = -Infinity
+    interface DirScore { dir: Direction; score: number; space: number; dist: number }
+    const candidates: DirScore[] = []
 
     for (let di = 0; di < 4; di++) {
       const nx = hx + DX[di], ny = hy + DY[di]
@@ -327,58 +301,90 @@ export function useGame() {
       if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
       // Skip reverse (into neck)
       if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
-      // Skip body/obstacle
-      if (occ[ny * G + nx]) continue
+      // Skip blocked
+      if (blocked[ny * G + nx]) continue
 
       const eats = nx === fx && ny === fy
 
-      // Simulate move
-      const simOcc = new Uint8Array(occ)
-      simOcc[ny * G + nx] = 1 // new head
-      if (!eats) simOcc[ty * G + tx] = 0 // tail moves away
-
-      // Safety check
-      let safe = false
-      if (eats) {
-        // After eating: reach tail AND enough space for longer snake
-        simOcc[ty * G + tx] = 0
-        safe = canReach(nx, ny, tx, ty, simOcc)
-        if (safe) {
-          // Count reachable space - need room for the longer snake
-          const vis = new Uint8Array(G * G)
-          const qx = new Int32Array(G * G), qy = new Int32Array(G * G)
-          let h2 = 0, t2 = 0; vis[ny * G + nx] = 1; qx[t2] = nx; qy[t2] = ny; t2++
-          let cnt = 1
-          while (h2 < t2) { const cx = qx[h2], cy = qy[h2]; h2++
-            for (let d = 0; d < 4; d++) { const nnx = cx + DX[d], nny = cy + DY[d]
-              if (nnx < 0 || nnx >= G || nny < 0 || nny >= G) continue
-              const idx = nny * G + nnx; if (vis[idx] || simOcc[idx]) continue
-              vis[idx] = 1; qx[t2] = nnx; qy[t2] = nny; t2++; cnt++ } }
-          if (cnt < sn.length + 3) safe = false
-        }
-      } else {
-        // Non-eating: check reachable space (not tail reachability - too restrictive for long snakes)
-        simOcc[ty * G + tx] = 0 // old tail freed
-        const vis = new Uint8Array(G * G)
-        const qx = new Int32Array(G * G), qy = new Int32Array(G * G)
-        let h2 = 0, t2 = 0; vis[ny * G + nx] = 1; qx[t2] = nx; qy[t2] = ny; t2++
-        let cnt = 1
-        while (h2 < t2) { const cx = qx[h2], cy = qy[h2]; h2++
-          for (let d = 0; d < 4; d++) { const nnx = cx + DX[d], nny = cy + DY[d]
-            if (nnx < 0 || nnx >= G || nny < 0 || nny >= G) continue
-            const idx = nny * G + nnx; if (vis[idx] || simOcc[idx]) continue
-            vis[idx] = 1; qx[t2] = nnx; qy[t2] = nny; t2++; cnt++ } }
-        safe = cnt >= sn.length
+      // Simulate move: what the board looks like after the move
+      const simBlocked = new Uint8Array(blocked)
+      // Don't block new head - it's the starting point for flood fill
+      if (!eats) {
+        // Tail moves away (free it)
+        const tailIdx = sn.length - 1
+        simBlocked[sn[tailIdx].y * G + sn[tailIdx].x] = 0
       }
+      // Block old body cells that are still there (head moves, rest follows)
+      // The new head is NOT blocked - it's where we start the flood fill
 
-      if (safe) {
-        const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
-        const score = eats ? 1000000 - dist : 10000 - dist
-        if (score > bestScore) { bestScore = score; bestDir = dirs[di] }
-      }
+      // After eating: snake is 1 longer, need more space
+      const simLen = eats ? sn.length + 1 : sn.length
+
+      // Count reachable space from new head position
+      const space = floodFill(simBlocked, nx, ny)
+
+      // Must have enough space for the snake
+      if (space < simLen) continue
+
+      const dist = Math.abs(nx - fx) + Math.abs(ny - fy)
+      candidates.push({ dir: dirs[di], score: 0, space, dist })
     }
 
-    return bestDir
+    if (candidates.length === 0) {
+      // No safe move: emergency - pick any valid direction
+      for (let di = 0; di < 4; di++) {
+        const nx = hx + DX[di], ny = hy + DY[di]
+        if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+        if (sn.length > 1 && nx === sn[1].x && ny === sn[1].y) continue
+        if (!blocked[ny * G + nx]) return dirs[di]
+      }
+      return state.direction
+    }
+
+    // Score each candidate
+    for (const c of candidates) {
+      const nx = hx + DX[dirs.indexOf(c.dir)], ny = hy + DY[dirs.indexOf(c.dir)]
+      const eats = nx === fx && ny === fy
+      const simLen = eats ? sn.length + 1 : sn.length
+
+      // Space score: prefer more space (survival first)
+      let spaceScore = c.space
+
+      // If space is tight (< 2x snake length), heavily prioritize space
+      if (c.space < simLen * 2) {
+        spaceScore = c.space * 100
+      }
+
+      // Food score: only pursue if safe
+      let foodScore = 0
+      if (eats) {
+        // Always take food if we have enough space
+        if (c.space >= simLen * 2) {
+          foodScore = 10000
+        } else {
+          // Tight space: still take food but with lower priority
+          foodScore = 1000
+        }
+      } else {
+        // Prefer moving toward food when not eating
+        foodScore = (currentSpace - c.dist) * 0.5
+      }
+
+      // Follow-tail bonus: when space is limited, prefer moving toward tail
+      // This creates a safe "loop" pattern
+      if (c.space < simLen * 3 && sn.length > 3) {
+        const tx = sn[sn.length - 1].x, ty = sn[sn.length - 1].y
+        const tailDist = Math.abs(nx - tx) + Math.abs(ny - ty)
+        // Closer to tail = better when space is tight
+        spaceScore += (20 - tailDist) * 50
+      }
+
+      c.score = spaceScore + foodScore
+    }
+
+    // Pick best
+    candidates.sort((a, b) => b.score - a.score)
+    return candidates[0].dir
   }
 
 
