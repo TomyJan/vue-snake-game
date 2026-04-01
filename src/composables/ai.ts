@@ -4,6 +4,7 @@ const G = 20
 const DX = [0, 1, 0, -1]
 const DY = [-1, 0, 1, 0]
 const DIRS: Direction[] = ['up', 'right', 'down', 'left']
+const LOOKAHEAD = 30 // How many steps to simulate ahead
 
 function floodFill(blocked: Uint8Array, sx: number, sy: number): number {
   const vis = new Uint8Array(G * G)
@@ -23,6 +24,93 @@ function floodFill(blocked: Uint8Array, sx: number, sy: number): number {
     }
   }
   return cnt
+}
+
+/**
+ * Score a direction by simulating N steps ahead with the best follow-up moves.
+ * Uses iterative deepening: tries all directions at each depth, keeps top candidates.
+ */
+function scoreDirection(
+  blocked: Uint8Array,
+  snakeBody: { x: number; y: number }[],
+  firstDir: number,
+  depth: number,
+  tailFrozen: boolean,
+): number {
+  const hx = snakeBody[0].x, hy = snakeBody[0].y
+  const nx = hx + DX[firstDir], ny = hy + DY[firstDir]
+
+  // Quick wall/body check
+  if (nx < 0 || nx >= G || ny < 0 || ny >= G) return -Infinity
+  if (blocked[ny * G + nx]) return -Infinity
+
+  // Build simulated snake after first move
+  const simBody = [{ x: nx, y: ny }, ...snakeBody]
+  const simBlocked = new Uint8Array(blocked)
+  let frozen = tailFrozen
+
+  if (!frozen) {
+    const tail = simBody[simBody.length - 1]
+    simBlocked[tail.y * G + tail.x] = 0
+  }
+  frozen = false // After first move, tail is no longer frozen
+
+  if (depth <= 1) {
+    return floodFill(simBlocked, nx, ny)
+  }
+
+  // Try all 3 remaining directions (exclude reverse) for the rest of the depth
+  let bestScore = -Infinity
+  for (let d = 0; d < 4; d++) {
+    // Skip reverse direction
+    if (firstDir === 0 && d === 2) continue // up vs down
+    if (firstDir === 2 && d === 0) continue
+    if (firstDir === 1 && d === 3) continue // right vs left
+    if (firstDir === 3 && d === 1) continue
+
+    const s = simulateDeep(simBlocked, simBody, d, depth - 1)
+    if (s > bestScore) bestScore = s
+  }
+
+  return bestScore
+}
+
+/**
+ * Recursively simulate a direction for `depth` steps, always picking the
+ * direction that maximizes remaining space at each step (greedy lookahead).
+ */
+function simulateDeep(
+  blocked: Uint8Array,
+  body: { x: number; y: number }[],
+  dir: number,
+  depth: number,
+): number {
+  const nx = body[0].x + DX[dir], ny = body[0].y + DY[dir]
+  if (nx < 0 || nx >= G || ny < 0 || ny >= G) return -Infinity
+  if (blocked[ny * G + nx]) return -Infinity
+
+  // Build new state
+  const newBody = [{ x: nx, y: ny }, ...body]
+  const newBlocked = new Uint8Array(blocked)
+  const tail = newBody[newBody.length - 1]
+  newBlocked[tail.y * G + tail.x] = 0
+  newBody.pop()
+
+  if (depth <= 0) {
+    return floodFill(newBlocked, nx, ny)
+  }
+
+  // Pick best next direction greedily
+  let best = -Infinity
+  for (let d = 0; d < 4; d++) {
+    if (dir === 0 && d === 2) continue
+    if (dir === 2 && d === 0) continue
+    if (dir === 1 && d === 3) continue
+    if (dir === 3 && d === 1) continue
+    const s = simulateDeep(newBlocked, newBody, d, depth - 1)
+    if (s > best) best = s
+  }
+  return best
 }
 
 export function findSafeDirection(
@@ -46,6 +134,11 @@ export function findSafeDirection(
   let bestDir: Direction = 'right'
   let bestScore = -Infinity
 
+  // Adaptive lookahead: deeper when snake is longer or space is tight
+  const totalSpace = G * G - snake.length - obstacles.length
+  const fillRatio = snake.length / totalSpace
+  const depth = fillRatio > 0.3 ? Math.min(LOOKAHEAD, 40) : Math.min(LOOKAHEAD, 20)
+
   for (let di = 0; di < 4; di++) {
     const nx = hx + DX[di], ny = hy + DY[di]
     // Skip walls
@@ -55,53 +148,45 @@ export function findSafeDirection(
     // Skip body/obstacle
     if (blocked[ny * G + nx]) continue
 
+    // --- Lookahead score ---
+    const lookaheadScore = scoreDirection(blocked, snake, di, depth, tailFrozen)
+    if (lookaheadScore === -Infinity) continue // This direction leads to death
+
+    // --- Heuristic score on top of lookahead ---
+    let score = lookaheadScore * 10000 // Primary: reachable space after N moves
+
+    // Food proximity
     const eats = nx === fx && ny === fy
-    const nextLen = eats ? snake.length + 1 : snake.length
-
-    // Simulate: board after move
-    const simBlocked = new Uint8Array(blocked)
-    if (!eats) simBlocked[ty * G + tx] = 0 // tail moves away
-    // New head NOT blocked for flood fill
-
-    // Reachable space from new head
-    const space = floodFill(simBlocked, nx, ny)
-
-    // Hard safety: must have room for the snake
-    if (space < nextLen) continue
-
-    // Score
-    let score = 0
-
-    // Eating: be more conservative as snake gets longer
-    // Need proportionally more space for longer snakes
-    const safetyMargin = Math.max(nextLen * 1.5, 30) // At least 30 cells margin
-    if (eats && space >= nextLen + safetyMargin) {
-      score += 10000000 // Very safe to eat
-    } else if (eats && space >= nextLen * 2) {
-      score += 1000000 // Safe to eat
-    } else if (eats) {
-      // Too dangerous to eat - snake would trap itself
-      score -= 10000000
-    }
-
-    // Prefer moving toward food (when safe)
     const foodDist = Math.abs(nx - fx) + Math.abs(ny - fy)
-    if (space >= nextLen * 2) {
-      score -= foodDist * 100 // Pursue food when we have room
+
+    if (eats) {
+      // Only eat if lookahead shows we survive afterwards
+      const afterEatScore = scoreDirection(blocked, snake, di, depth + 5, true)
+      if (afterEatScore >= snake.length) {
+        score += 500000 // Bonus for safe eating
+      } else {
+        score -= 5000000 // Penalty: eating kills us
+      }
     } else {
-      score -= foodDist * 10 // Mild preference when tight
+      // Mild food pursuit when safe
+      if (lookaheadScore > snake.length * 3) {
+        score -= foodDist * 50
+      } else {
+        score -= foodDist * 5
+      }
     }
 
-    // Prefer more space (survival is priority)
-    score += space * 5
-
-    // Follow tail to maintain safe loop pattern
+    // Tail proximity: keep close when space is tight
     const tailDist = Math.abs(nx - tx) + Math.abs(ny - ty)
-    if (space < nextLen * 3) {
-      score -= tailDist * 50 // Strong tail following when space is limited
-    } else {
-      score -= tailDist * 10 // Mild tail following when safe
+    if (lookaheadScore < snake.length * 2) {
+      score -= tailDist * 100 // Space is tight, stay near tail
+    } else if (lookaheadScore < snake.length * 4) {
+      score -= tailDist * 20
     }
+
+    // Prefer center-ish positions (slight bias)
+    const centerDist = Math.abs(nx - G / 2) + Math.abs(ny - G / 2)
+    score -= centerDist * 2
 
     if (score > bestScore) {
       bestScore = score
@@ -109,13 +194,23 @@ export function findSafeDirection(
     }
   }
 
-  // Emergency: no safe move, pick any valid
+  // Emergency: no direction passed lookahead, try simple flood fill
   if (bestScore === -Infinity) {
     for (let di = 0; di < 4; di++) {
       const nx = hx + DX[di], ny = hy + DY[di]
       if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
       if (snake.length > 1 && nx === snake[1].x && ny === snake[1].y) continue
-      if (!blocked[ny * G + nx]) return DIRS[di]
+      if (blocked[ny * G + nx]) continue
+
+      const simBlocked = new Uint8Array(blocked)
+      if (!tailFrozen) {
+        simBlocked[ty * G + tx] = 0
+      }
+      const space = floodFill(simBlocked, nx, ny)
+      if (space > (bestScore === -Infinity ? 0 : -Infinity)) {
+        bestScore = space
+        bestDir = DIRS[di]
+      }
     }
   }
 
