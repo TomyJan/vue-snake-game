@@ -132,25 +132,40 @@ export function findSafeDirection(
     const futureSpace = lookaheadBFS(look, nx, ny, depth)
     if (futureSpace === 0) continue
 
-    let score = futureSpace * 1000
+    let score = futureSpace * 100
 
     const eats = nx === fx && ny === fy
     const foodDist = Math.abs(nx - fx) + Math.abs(ny - fy)
 
     if (eats) {
-      // Post-eat check: tail stays (frozen), head extends
-      const eatBlock = new Uint8Array(blocked)
-      eatBlock[ny * G + nx] = 1
+      // Eating is usually good - give big bonus
+      // Post-eat check: simulate with tail staying (frozen)
+      const eatBlock = new Uint8Array(look)
+      eatBlock[ny * G + nx] = 1 // new head as body (already in look, but mark as permanent)
       const postEat = lookaheadBFS(eatBlock, nx, ny, Math.min(depth, 12))
-      score += postEat >= snake.length + 2 ? 500000 : -5000000
+      if (postEat > snake.length) {
+        score += 50000 // Safe to eat
+      } else {
+        score -= 100000 // Eating would trap us - avoid
+      }
     } else {
-      score -= foodDist * (futureSpace > snake.length * 3 ? 50 : 5)
+      // Strong food pursuit when safe, moderate when tight
+      if (futureSpace > snake.length * 2) {
+        score -= foodDist * 500 // Chase food aggressively when safe
+      } else if (futureSpace > snake.length) {
+        score -= foodDist * 100 // Moderate pursuit when tight
+      } else {
+        score -= foodDist * 10 // Survival priority when critical
+      }
     }
 
-    // Tail following
+    // Tail following: only when space is tight (survival, not preference)
     const tailDist = Math.abs(nx - tx) + Math.abs(ny - ty)
-    if (futureSpace < snake.length * 2) score -= tailDist * 100
-    else if (futureSpace < snake.length * 4) score -= tailDist * 20
+    if (futureSpace < snake.length * 1.5) {
+      score -= tailDist * 200 // Critical: stay near tail
+    } else if (futureSpace < snake.length * 3) {
+      score -= tailDist * 30 // Moderate tightness
+    }
 
     // Slight center bias
     score -= (Math.abs(nx - G / 2) + Math.abs(ny - G / 2)) * 2
