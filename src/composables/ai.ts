@@ -1,14 +1,15 @@
 import type { Direction, Position } from '../types/game'
 
 const G = 20
+const GX2 = G * G
 const DX = [0, 1, 0, -1]
 const DY = [-1, 0, 1, 0]
 const DIRS: Direction[] = ['up', 'right', 'down', 'left']
-const LOOKAHEAD = 30 // How many steps to simulate ahead
 
+// BFS flood fill
 function floodFill(blocked: Uint8Array, sx: number, sy: number): number {
-  const vis = new Uint8Array(G * G)
-  const qx = new Int32Array(G * G), qy = new Int32Array(G * G)
+  const vis = new Uint8Array(GX2)
+  const qx = new Int32Array(GX2), qy = new Int32Array(GX2)
   let h = 0, t = 0
   if (blocked[sy * G + sx]) return 0
   vis[sy * G + sx] = 1; qx[t] = sx; qy[t] = sy; t++
@@ -27,87 +28,62 @@ function floodFill(blocked: Uint8Array, sx: number, sy: number): number {
 }
 
 /**
- * Score a direction by simulating N steps ahead with the best follow-up moves.
- * Uses iterative deepening: tries all directions at each depth, keeps top candidates.
+ * BFS lookahead: at each step, expand top-K branches only.
+ * Avoids exponential blowup.
+ *
+ * Each branch tracks: (hx, hy, px, py, blocked)
+ *   - hx,hy = current head
+ *   - px,py = previous tail position (to unblock when moving without eating)
+ *
+ * Returns best reachable space after `steps` simulated moves.
  */
-function scoreDirection(
+function lookaheadBFS(
   blocked: Uint8Array,
-  snakeBody: { x: number; y: number }[],
-  firstDir: number,
-  depth: number,
-  tailFrozen: boolean,
+  startHX: number,
+  startHY: number,
+  steps: number,
 ): number {
-  const hx = snakeBody[0].x, hy = snakeBody[0].y
-  const nx = hx + DX[firstDir], ny = hy + DY[firstDir]
+  const TOP_K = 3
 
-  // Quick wall/body check
-  if (nx < 0 || nx >= G || ny < 0 || ny >= G) return -Infinity
-  if (blocked[ny * G + nx]) return -Infinity
+  // Branch: head pos + prev tail pos + blocked snapshot
+  interface Branch { hx: number; hy: number; px: number; py: number; b: Uint8Array }
 
-  // Build simulated snake after first move
-  const simBody = [{ x: nx, y: ny }, ...snakeBody]
-  const simBlocked = new Uint8Array(blocked)
-  let frozen = tailFrozen
+  const init: Branch = { hx: startHX, hy: startHY, px: -1, py: -1, b: new Uint8Array(blocked) }
+  let branches: Branch[] = [init]
 
-  if (!frozen) {
-    const tail = simBody[simBody.length - 1]
-    simBlocked[tail.y * G + tail.x] = 0
-  }
-  frozen = false // After first move, tail is no longer frozen
+  const next: Branch[] = []
 
-  if (depth <= 1) {
-    return floodFill(simBlocked, nx, ny)
-  }
+  for (let step = 0; step < steps; step++) {
+    next.length = 0
 
-  // Try all 3 remaining directions (exclude reverse) for the rest of the depth
-  let bestScore = -Infinity
-  for (let d = 0; d < 4; d++) {
-    // Skip reverse direction
-    if (firstDir === 0 && d === 2) continue // up vs down
-    if (firstDir === 2 && d === 0) continue
-    if (firstDir === 1 && d === 3) continue // right vs left
-    if (firstDir === 3 && d === 1) continue
+    for (const br of branches) {
+      for (let d = 0; d < 4; d++) {
+        const nx = br.hx + DX[d], ny = br.hy + DY[d]
+        if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
+        if (br.b[ny * G + nx]) continue
 
-    const s = simulateDeep(simBlocked, simBody, d, depth - 1)
-    if (s > bestScore) bestScore = s
-  }
+        const nb = new Uint8Array(br.b)
+        nb[ny * G + nx] = 1            // new head blocked
+        if (br.px >= 0) nb[br.py * G + br.px] = 0  // old tail freed
 
-  return bestScore
-}
+        next.push({ hx: nx, hy: ny, px: br.hx, py: br.hy, b: nb })
+      }
+    }
 
-/**
- * Recursively simulate a direction for `depth` steps, always picking the
- * direction that maximizes remaining space at each step (greedy lookahead).
- */
-function simulateDeep(
-  blocked: Uint8Array,
-  body: { x: number; y: number }[],
-  dir: number,
-  depth: number,
-): number {
-  const nx = body[0].x + DX[dir], ny = body[0].y + DY[dir]
-  if (nx < 0 || nx >= G || ny < 0 || ny >= G) return -Infinity
-  if (blocked[ny * G + nx]) return -Infinity
+    if (next.length === 0) return 0
 
-  // Build new state
-  const newBody = [{ x: nx, y: ny }, ...body]
-  const newBlocked = new Uint8Array(blocked)
-  const tail = newBody[newBody.length - 1]
-  newBlocked[tail.y * G + tail.x] = 0
-  newBody.pop()
+    // Score and keep top K
+    for (const b of next) {
+      (b as any)._s = floodFill(b.b, b.hx, b.hy)
+    }
+    next.sort((a, b) => (b as any)._s - (a as any)._s)
 
-  if (depth <= 0) {
-    return floodFill(newBlocked, nx, ny)
+    branches = next.slice(0, TOP_K)
   }
 
-  // Pick best next direction greedily
-  let best = -Infinity
-  for (let d = 0; d < 4; d++) {
-    if (dir === 0 && d === 2) continue
-    if (dir === 2 && d === 0) continue
-    if (dir === 1 && d === 3) continue
-    if (dir === 3 && d === 1) continue
-    const s = simulateDeep(newBlocked, newBody, d, depth - 1)
+  let best = 0
+  for (const br of branches) {
+    const s = floodFill(br.b, br.hx, br.hy)
     if (s > best) best = s
   }
   return best
@@ -126,91 +102,72 @@ export function findSafeDirection(
   const tx = snake[snake.length - 1].x, ty = snake[snake.length - 1].y
 
   // Build blocked grid
-  const blocked = new Uint8Array(G * G)
+  const blocked = new Uint8Array(GX2)
   const bodyEnd = tailFrozen ? snake.length : snake.length - 1
   for (let i = 0; i < bodyEnd; i++) blocked[snake[i].y * G + snake[i].x] = 1
   for (const o of obstacles) blocked[o.y * G + o.x] = 1
 
+  // Adaptive depth
+  const ratio = snake.length / (GX2 - obstacles.length)
+  const depth = ratio > 0.3 ? 25 : ratio > 0.15 ? 20 : 12
+
   let bestDir: Direction = 'right'
   let bestScore = -Infinity
 
-  // Adaptive lookahead: deeper when snake is longer or space is tight
-  const totalSpace = G * G - snake.length - obstacles.length
-  const fillRatio = snake.length / totalSpace
-  const depth = fillRatio > 0.3 ? Math.min(LOOKAHEAD, 40) : Math.min(LOOKAHEAD, 20)
-
   for (let di = 0; di < 4; di++) {
     const nx = hx + DX[di], ny = hy + DY[di]
-    // Skip walls
     if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
-    // Skip reverse (into neck)
     if (snake.length > 1 && nx === snake[1].x && ny === snake[1].y) continue
-    // Skip body/obstacle
     if (blocked[ny * G + nx]) continue
 
-    // --- Lookahead score ---
-    const lookaheadScore = scoreDirection(blocked, snake, di, depth, tailFrozen)
-    if (lookaheadScore === -Infinity) continue // This direction leads to death
+    // Quick space check
+    const quick = new Uint8Array(blocked)
+    if (!tailFrozen) quick[ty * G + tx] = 0
+    if (floodFill(quick, nx, ny) < snake.length) continue
 
-    // --- Heuristic score on top of lookahead ---
-    let score = lookaheadScore * 10000 // Primary: reachable space after N moves
+    // Prepare lookahead blocked grid (tail freed if not frozen)
+    const look = new Uint8Array(blocked)
+    if (!tailFrozen) look[ty * G + tx] = 0
 
-    // Food proximity
+    const futureSpace = lookaheadBFS(look, nx, ny, depth)
+    if (futureSpace === 0) continue
+
+    let score = futureSpace * 1000
+
     const eats = nx === fx && ny === fy
     const foodDist = Math.abs(nx - fx) + Math.abs(ny - fy)
 
     if (eats) {
-      // Only eat if lookahead shows we survive afterwards
-      const afterEatScore = scoreDirection(blocked, snake, di, depth + 5, true)
-      if (afterEatScore >= snake.length) {
-        score += 500000 // Bonus for safe eating
-      } else {
-        score -= 5000000 // Penalty: eating kills us
-      }
+      // Post-eat check: tail stays (frozen), head extends
+      const eatBlock = new Uint8Array(blocked)
+      eatBlock[ny * G + nx] = 1
+      const postEat = lookaheadBFS(eatBlock, nx, ny, Math.min(depth, 12))
+      score += postEat >= snake.length + 2 ? 500000 : -5000000
     } else {
-      // Mild food pursuit when safe
-      if (lookaheadScore > snake.length * 3) {
-        score -= foodDist * 50
-      } else {
-        score -= foodDist * 5
-      }
+      score -= foodDist * (futureSpace > snake.length * 3 ? 50 : 5)
     }
 
-    // Tail proximity: keep close when space is tight
+    // Tail following
     const tailDist = Math.abs(nx - tx) + Math.abs(ny - ty)
-    if (lookaheadScore < snake.length * 2) {
-      score -= tailDist * 100 // Space is tight, stay near tail
-    } else if (lookaheadScore < snake.length * 4) {
-      score -= tailDist * 20
-    }
+    if (futureSpace < snake.length * 2) score -= tailDist * 100
+    else if (futureSpace < snake.length * 4) score -= tailDist * 20
 
-    // Prefer center-ish positions (slight bias)
-    const centerDist = Math.abs(nx - G / 2) + Math.abs(ny - G / 2)
-    score -= centerDist * 2
+    // Slight center bias
+    score -= (Math.abs(nx - G / 2) + Math.abs(ny - G / 2)) * 2
 
-    if (score > bestScore) {
-      bestScore = score
-      bestDir = DIRS[di]
-    }
+    if (score > bestScore) { bestScore = score; bestDir = DIRS[di] }
   }
 
-  // Emergency: no direction passed lookahead, try simple flood fill
+  // Emergency fallback
   if (bestScore === -Infinity) {
+    let maxS = -1
     for (let di = 0; di < 4; di++) {
       const nx = hx + DX[di], ny = hy + DY[di]
       if (nx < 0 || nx >= G || ny < 0 || ny >= G) continue
       if (snake.length > 1 && nx === snake[1].x && ny === snake[1].y) continue
       if (blocked[ny * G + nx]) continue
-
-      const simBlocked = new Uint8Array(blocked)
-      if (!tailFrozen) {
-        simBlocked[ty * G + tx] = 0
-      }
-      const space = floodFill(simBlocked, nx, ny)
-      if (space > (bestScore === -Infinity ? 0 : -Infinity)) {
-        bestScore = space
-        bestDir = DIRS[di]
-      }
+      const s = floodFill(blocked, nx, ny)
+      if (s > maxS) { maxS = s; bestDir = DIRS[di] }
     }
   }
 
