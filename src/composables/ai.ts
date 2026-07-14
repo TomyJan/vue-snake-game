@@ -3,11 +3,11 @@ import type { Direction, Position } from '../types/game'
 /**
  * Snake AI for 20×20 with static obstacles.
  *
- * 1) Take food only if EVERY intermediate state along the shortest food
- *    path still keeps head→tail connectivity (replan-safe), and post-eat
- *    still keeps connectivity.
- * 2) Otherwise pick a legal step that keeps head→tail, maximizing
- *    free space + tail-path length + mobility (with mild food pull).
+ * 1) Eat only if the whole shortest food path is replan-safe (head→tail
+ *    after every step) and post-eat still has usable room.
+ * 2) Detour among tail-preserving moves, maximizing *usable* free space —
+ *    heavily penalize 1-wide / odd dead corridors that look like escapes
+ *    but are traps.
  */
 
 const G = 20
@@ -20,6 +20,9 @@ const deadly2 = new Uint8Array(N)
 const vis = new Uint8Array(N)
 const prev = new Int32Array(N)
 const q = new Int32Array(N)
+const region = new Int32Array(N)
+const deg = new Uint8Array(N)
+const seenThin = new Uint8Array(N)
 
 function cell(x: number, y: number) {
   return y * G + x
@@ -90,7 +93,6 @@ function flood(buf: Uint8Array, sx: number, sy: number): number {
   return count
 }
 
-/** Path from start to target (cells after start). targetOpen: treat target free. */
 function bfs(
   buf: Uint8Array,
   start: Position,
@@ -165,6 +167,161 @@ function tailPathLen(snake: Position[], obstacles: Position[], frozen: boolean):
   return p ? p.length : -1
 }
 
+export type RoomQ = {
+  space: number
+  usable: number
+  deadEnds: number
+  thin: number
+  corners: number
+  oddTraps: number
+  wideCells: number
+}
+
+/**
+ * Free-region quality from the head.
+ * Raw flood-fill counts 1-wide odd stubs as "space"; those are fake exits.
+ */
+function roomQuality(snake: Position[], obstacles: Position[], frozen: boolean): RoomQ {
+  const empty: RoomQ = {
+    space: 0,
+    usable: 0,
+    deadEnds: 0,
+    thin: 0,
+    corners: 0,
+    oddTraps: 0,
+    wideCells: 0,
+  }
+  const { head } = prepSearch(snake, obstacles, frozen, deadly)
+  const start = cell(head.x, head.y)
+  if (deadly[start]) return empty
+
+  vis.fill(0)
+  let h = 0
+  let t = 0
+  vis[start] = 1
+  q[t++] = start
+  let nRegion = 0
+  region[nRegion++] = start
+
+  while (h < t) {
+    const cur = q[h++]
+    const cx = cur % G
+    const cy = (cur / G) | 0
+    for (let d = 0; d < 4; d++) {
+      const nx = cx + DX[d]
+      const ny = cy + DY[d]
+      if (!inGrid(nx, ny)) continue
+      const ni = cell(nx, ny)
+      if (vis[ni] || deadly[ni]) continue
+      vis[ni] = 1
+      q[t++] = ni
+      region[nRegion++] = ni
+    }
+  }
+
+  for (let i = 0; i < nRegion; i++) {
+    const cur = region[i]
+    const cx = cur % G
+    const cy = (cur / G) | 0
+    let dcount = 0
+    for (let d = 0; d < 4; d++) {
+      const nx = cx + DX[d]
+      const ny = cy + DY[d]
+      if (!inGrid(nx, ny)) continue
+      if (!deadly[cell(nx, ny)]) dcount++
+    }
+    deg[cur] = dcount
+  }
+
+  let deadEnds = 0
+  let thin = 0
+  let corners = 0
+  let wideCells = 0
+
+  for (let i = 0; i < nRegion; i++) {
+    const cur = region[i]
+    const dcount = deg[cur]
+    if (dcount <= 1) {
+      deadEnds++
+      continue
+    }
+    if (dcount === 2) {
+      const cx = cur % G
+      const cy = (cur / G) | 0
+      const dirs: number[] = []
+      for (let d = 0; d < 4; d++) {
+        const nx = cx + DX[d]
+        const ny = cy + DY[d]
+        if (!inGrid(nx, ny)) continue
+        if (deadly[cell(nx, ny)]) continue
+        dirs.push(d)
+      }
+      if (dirs.length === 2 && (dirs[0] ^ dirs[1]) === 2) thin++
+      else corners++
+      continue
+    }
+    wideCells++
+  }
+
+  // Walk from dead-ends through 1-wide chains → odd spur length is useless
+  seenThin.fill(0)
+  let oddTraps = 0
+  for (let i = 0; i < nRegion; i++) {
+    const startC = region[i]
+    if (deg[startC] !== 1) continue
+    if (seenThin[startC]) continue
+
+    let cur = startC
+    let prevC = -1
+    let length = 0
+    while (true) {
+      if (seenThin[cur]) break
+      seenThin[cur] = 1
+      length++
+
+      const cx = cur % G
+      const cy = (cur / G) | 0
+      let next = -1
+      let freeN = 0
+      for (let d = 0; d < 4; d++) {
+        const nx = cx + DX[d]
+        const ny = cy + DY[d]
+        if (!inGrid(nx, ny)) continue
+        const ni = cell(nx, ny)
+        if (deadly[ni]) continue
+        freeN++
+        if (ni !== prevC) next = ni
+      }
+
+      if (next < 0) break
+      // hit a branch / open area
+      if (deg[next] >= 3) break
+      // continue only along degree-2 corridor or into another dead-end
+      if (deg[next] === 2 || deg[next] === 1) {
+        prevC = cur
+        cur = next
+        if (length > 50) break
+        continue
+      }
+      break
+    }
+
+    if (length >= 1) {
+      // odd-length 1-wide spur: classic fake escape row/col
+      if (length % 2 === 1) oddTraps += length * 2
+      else oddTraps += length
+    }
+  }
+
+  const space = nRegion
+  const usable = Math.max(
+    0,
+    space - deadEnds * 1.3 - thin * 1.15 - corners * 0.4 - oddTraps * 0.55,
+  )
+
+  return { space, usable, deadEnds, thin, corners, oddTraps, wideCells }
+}
+
 function advance(
   snake: Position[],
   food: Position,
@@ -178,10 +335,6 @@ function advance(
   return { snake: ns, frozen: ate, ate }
 }
 
-/**
- * Food path is replan-safe iff after every step we still reach tail.
- * (AI re-plans every tick; intermediate dead-ends would cause drift into traps.)
- */
 function safeFoodFirst(
   snake: Position[],
   food: Position,
@@ -199,17 +352,23 @@ function safeFoodFirst(
     s = r.snake
     fr = r.frozen
     if (!reachTail(s, obstacles, fr)) {
-      // allow pure huge space only post-eat
       if (!(r.ate && spaceOf(s, obstacles, fr) >= s.length + 12)) return null
     }
   }
   if (!fr) return null
 
-  // Late game: demand residual room after eat
-  if (snake.length >= 100) {
-    const sp = spaceOf(s, obstacles, fr)
-    if (sp < Math.floor(snake.length * 0.3)) return null
+  const qAfter = roomQuality(s, obstacles, fr)
+  if (snake.length >= 35) {
+    if (qAfter.usable < Math.max(10, Math.floor(snake.length * 0.18))) return null
+    // trap pocket: mostly thin/dead structure
+    if (
+      qAfter.thin + qAfter.deadEnds > qAfter.wideCells + 3 &&
+      qAfter.usable < snake.length * 0.4
+    ) {
+      return null
+    }
   }
+  if (snake.length >= 100 && qAfter.space < Math.floor(snake.length * 0.3)) return null
 
   return path[0]
 }
@@ -223,39 +382,78 @@ function evaluate(
 ): number {
   const len = snake.length
   const rt = reachTail(snake, obstacles, frozen)
-  const space = spaceOf(snake, obstacles, frozen)
+  const rq = roomQuality(snake, obstacles, frozen)
   const tpl = tailPathLen(snake, obstacles, frozen)
   const moves = legal(snake, obstacles, frozen)
 
-  if (!rt && space < len + 12) return -1e12
+  if (!rt && rq.space < len + 12) return -1e12
 
   let score = 0
   if (rt) score += 5_000_000 + Math.max(tpl, 0) * 800
   else score -= 2_000_000
 
-  score += space * 400
+  score += rq.usable * 750
+  score += rq.wideCells * 400
+  score += rq.space * 60
+
+  score -= rq.deadEnds * 5000
+  score -= rq.thin * 4200
+  score -= rq.oddTraps * 2800
+  score -= rq.corners * 800
+
   score += moves.length * 5000
 
   const h = snake[0]
   const fd = Math.abs(h.x - food.x) + Math.abs(h.y - food.y)
-  if (rt && space > len * 2 && moves.length >= 2) score -= fd * 90
-  else if (rt && space > len * 1.3) score -= fd * 25
+  if (rt && rq.usable > len * 1.6 && moves.length >= 2) score -= fd * 90
+  else if (rt && rq.usable > len * 1.1) score -= fd * 25
   else score -= fd * 3
 
   if (moves.length <= 1) score -= 80_000
-  if (space < len + 3) score -= 100_000
+  if (rq.usable < len + 3) score -= 130_000
+  if (rq.thin > rq.wideCells && rq.usable < len * 1.5) score -= 100_000
 
   if (ate) score += rt ? 25_000 : -3_000_000
 
-  // 1-ply: children that keep tail
   let kids = 0
   for (const m of moves) {
     const r = advance(snake, food, frozen, m)
-    if (reachTail(r.snake, obstacles, r.frozen)) kids++
+    if (!reachTail(r.snake, obstacles, r.frozen)) continue
+    const cq = roomQuality(r.snake, obstacles, r.frozen)
+    if (cq.usable >= Math.min(r.snake.length, 8)) kids++
   }
-  score += kids * 8000
+  score += kids * 9000
 
   return score
+}
+
+/** True if step leaves the head in a thin-corridor / odd-trap pocket. */
+function afterStepIsThinTrap(
+  snake: Position[],
+  food: Position,
+  obstacles: Position[],
+  frozen: boolean,
+  next: Position,
+): boolean {
+  const r = advance(snake, food, frozen, next)
+  const rq = roomQuality(r.snake, obstacles, r.frozen)
+
+  fillDeadly(r.snake, obstacles, r.frozen, deadly2)
+  const h = r.snake[0]
+  deadly2[cell(h.x, h.y)] = 0
+  let local = 0
+  for (let d = 0; d < 4; d++) {
+    const nx = h.x + DX[d]
+    const ny = h.y + DY[d]
+    if (!inGrid(nx, ny)) continue
+    if (deadly2[cell(nx, ny)]) continue
+    local++
+  }
+
+  if (local <= 1 && rq.thin + rq.deadEnds >= rq.wideCells) return true
+  if (local <= 1 && rq.oddTraps >= 3) return true
+  if (rq.oddTraps >= 5 && rq.wideCells <= 2 && rq.usable < r.snake.length + 6) return true
+  return false
 }
 
 export function findSafeDirection(
@@ -273,28 +471,33 @@ export function findSafeDirection(
   const foodStep = safeFoodFirst(snake, food, obstacles, tailFrozen)
   if (foodStep) return dirOf(head, foodStep)
 
-  // Prefer moves that keep tail reachability
   const keep = moves.filter((m) => {
     const r = advance(snake, food, tailFrozen, m)
     return reachTail(r.snake, obstacles, r.frozen)
   })
-  const pool = keep.length > 0 ? keep : moves
+  let pool = keep.length > 0 ? keep : moves
+
+  // Prefer not entering 1-wide / odd dead corridors when wider options exist
+  if (pool.length > 1) {
+    const fat = pool.filter((m) => !afterStepIsThinTrap(snake, food, obstacles, tailFrozen, m))
+    if (fat.length > 0) pool = fat
+  }
 
   let best = pool[0]
   let bestScore = -Infinity
   for (const m of pool) {
     const r = advance(snake, food, tailFrozen, m)
-    const sc = evaluate(r.snake, food, obstacles, r.frozen, r.ate)
+    let sc = evaluate(r.snake, food, obstacles, r.frozen, r.ate)
+    if (afterStepIsThinTrap(snake, food, obstacles, tailFrozen, m)) sc -= 180_000
     if (sc > bestScore) {
       bestScore = sc
       best = m
     }
   }
 
-  // Follow longest-ish tail path when desperate
   if (keep.length === 0) {
-    const { head: h, tail } = prepSearch(snake, obstacles, tailFrozen, deadly2)
-    const tp = bfs(deadly2, h, tail, true)
+    const { head: hh, tail } = prepSearch(snake, obstacles, tailFrozen, deadly2)
+    const tp = bfs(deadly2, hh, tail, true)
     if (tp && tp.length > 0) {
       const step0 = tp[0]
       if (moves.some((m) => m.x === step0.x && m.y === step0.y)) return dirOf(head, step0)
