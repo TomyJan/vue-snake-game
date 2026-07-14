@@ -3,11 +3,11 @@ import type { Direction, Position } from '../types/game'
 /**
  * Snake AI for 20×20 with static obstacles.
  *
- * 1) Eat only if the whole shortest food path is replan-safe (head→tail
- *    after every step) and post-eat still has usable room.
- * 2) Detour among tail-preserving moves, maximizing *usable* free space —
- *    heavily penalize 1-wide / odd dead corridors that look like escapes
- *    but are traps.
+ * Root issue (user-reported): when "leaving an exit", the AI keeps an
+ * odd-length 1-wide row/column that flood-fill counts as free space but
+ * is useless (parity trap). Fix: compute *effective* free space by
+ * stripping 1-wide dead-end spurs (especially odd-length) out of the
+ * head component before scoring.
  */
 
 const G = 20
@@ -22,6 +22,7 @@ const prev = new Int32Array(N)
 const q = new Int32Array(N)
 const region = new Int32Array(N)
 const deg = new Uint8Array(N)
+const spurMark = new Uint8Array(N)
 const seenThin = new Uint8Array(N)
 
 function cell(x: number, y: number) {
@@ -168,33 +169,45 @@ function tailPathLen(snake: Position[], obstacles: Position[], frozen: boolean):
 }
 
 export type RoomQ = {
+  /** raw flood-fill count */
   space: number
-  usable: number
+  /** space after stripping 1-wide dead-end spurs (esp. odd) */
+  effective: number
+  /** cells belonging to dead-end 1-wide spurs */
+  spurCells: number
+  /** number of odd-length spurs */
+  oddSpurs: number
+  /** sum of odd spur lengths */
+  oddSpurLen: number
   deadEnds: number
   thin: number
-  corners: number
-  oddTraps: number
   wideCells: number
 }
 
 /**
- * Free-region quality from the head.
- * Raw flood-fill counts 1-wide odd stubs as "space"; those are fake exits.
+ * Effective free space = head component minus unusable 1-wide spurs.
+ *
+ * A spur is a chain starting at a degree-1 free cell and walking only
+ * through degree-2 corridor cells until a junction (deg≥3) or end.
+ * Entire spur is NOT real escape room for a long snake; odd length is
+ * especially useless (parity).
  */
 function roomQuality(snake: Position[], obstacles: Position[], frozen: boolean): RoomQ {
   const empty: RoomQ = {
     space: 0,
-    usable: 0,
+    effective: 0,
+    spurCells: 0,
+    oddSpurs: 0,
+    oddSpurLen: 0,
     deadEnds: 0,
     thin: 0,
-    corners: 0,
-    oddTraps: 0,
     wideCells: 0,
   }
   const { head } = prepSearch(snake, obstacles, frozen, deadly)
   const start = cell(head.x, head.y)
   if (deadly[start]) return empty
 
+  // Collect head-reachable free component
   vis.fill(0)
   let h = 0
   let t = 0
@@ -202,7 +215,6 @@ function roomQuality(snake: Position[], obstacles: Position[], frozen: boolean):
   q[t++] = start
   let nRegion = 0
   region[nRegion++] = start
-
   while (h < t) {
     const cur = q[h++]
     const cx = cur % G
@@ -235,17 +247,12 @@ function roomQuality(snake: Position[], obstacles: Position[], frozen: boolean):
 
   let deadEnds = 0
   let thin = 0
-  let corners = 0
   let wideCells = 0
-
   for (let i = 0; i < nRegion; i++) {
     const cur = region[i]
     const dcount = deg[cur]
-    if (dcount <= 1) {
-      deadEnds++
-      continue
-    }
-    if (dcount === 2) {
+    if (dcount <= 1) deadEnds++
+    else if (dcount === 2) {
       const cx = cur % G
       const cy = (cur / G) | 0
       const dirs: number[] = []
@@ -257,69 +264,130 @@ function roomQuality(snake: Position[], obstacles: Position[], frozen: boolean):
         dirs.push(d)
       }
       if (dirs.length === 2 && (dirs[0] ^ dirs[1]) === 2) thin++
-      else corners++
-      continue
-    }
-    wideCells++
+    } else wideCells++
   }
 
-  // Walk from dead-ends through 1-wide chains → odd spur length is useless
+  // Mark spur cells: walk from each dead-end through deg-2 corridor
+  spurMark.fill(0)
   seenThin.fill(0)
-  let oddTraps = 0
+  let spurCells = 0
+  let oddSpurs = 0
+  let oddSpurLen = 0
+
   for (let i = 0; i < nRegion; i++) {
     const startC = region[i]
     if (deg[startC] !== 1) continue
     if (seenThin[startC]) continue
 
+    // Don't treat the snake's own head as a "spur start" if it's the only deg-1
+    // and it's the search origin — still ok to analyze chains from true pockets.
+
+    const path: number[] = []
     let cur = startC
     let prevC = -1
-    let length = 0
+    let hitJunction = false
     while (true) {
-      if (seenThin[cur]) break
+      if (seenThin[cur] && path.length > 0) break
       seenThin[cur] = 1
-      length++
+      path.push(cur)
 
       const cx = cur % G
       const cy = (cur / G) | 0
       let next = -1
-      let freeN = 0
       for (let d = 0; d < 4; d++) {
         const nx = cx + DX[d]
         const ny = cy + DY[d]
         if (!inGrid(nx, ny)) continue
         const ni = cell(nx, ny)
         if (deadly[ni]) continue
-        freeN++
-        if (ni !== prevC) next = ni
+        if (ni === prevC) continue
+        next = ni
+        // prefer single continuation
       }
+      // recount free neighbors excluding prev
+      let freeN = 0
+      let only = -1
+      for (let d = 0; d < 4; d++) {
+        const nx = cx + DX[d]
+        const ny = cy + DY[d]
+        if (!inGrid(nx, ny)) continue
+        const ni = cell(nx, ny)
+        if (deadly[ni]) continue
+        if (ni === prevC) continue
+        freeN++
+        only = ni
+      }
+      next = freeN === 1 ? only : -1
 
       if (next < 0) break
-      // hit a branch / open area
-      if (deg[next] >= 3) break
-      // continue only along degree-2 corridor or into another dead-end
-      if (deg[next] === 2 || deg[next] === 1) {
+      if (deg[next] >= 3) {
+        hitJunction = true
+        break
+      }
+      // continue into corridor (deg 2) or another dead-end
+      if (deg[next] <= 2) {
         prevC = cur
         cur = next
-        if (length > 50) break
+        if (path.length > 60) break
         continue
       }
       break
     }
 
-    if (length >= 1) {
-      // odd-length 1-wide spur: classic fake escape row/col
-      if (length % 2 === 1) oddTraps += length * 2
-      else oddTraps += length
+    // Spur = dead-end chain that ends at junction or is a pure dead pocket
+    // Strip ALL cells of such 1-wide chains from effective space.
+    // Exception: if path includes the head and is the only way (we're already in it),
+    // still strip distal spur cells beyond head? Keep simple: strip whole spur if
+    // it doesn't contain the head, or if it does contain head only strip the part
+    // distal from head toward the dead end (not the path out).
+    const headInPath = path.includes(start)
+    if (!headInPath) {
+      for (const c of path) {
+        if (!spurMark[c]) {
+          spurMark[c] = 1
+          spurCells++
+        }
+      }
+      if (path.length % 2 === 1) {
+        oddSpurs++
+        oddSpurLen += path.length
+      }
+    } else {
+      // Head is on the spur: only mark cells from dead-end up to (not including) head
+      // as useless distal pocket; cells from head outward may be the real exit.
+      const headIdx = path.indexOf(start)
+      // path starts at dead-end; headIdx is toward junction
+      for (let k = 0; k < headIdx; k++) {
+        const c = path[k]
+        if (!spurMark[c]) {
+          spurMark[c] = 1
+          spurCells++
+        }
+      }
+      const distalLen = headIdx
+      if (distalLen > 0 && distalLen % 2 === 1) {
+        oddSpurs++
+        oddSpurLen += distalLen
+      }
+      void hitJunction
     }
   }
 
   const space = nRegion
-  const usable = Math.max(
-    0,
-    space - deadEnds * 1.3 - thin * 1.15 - corners * 0.4 - oddTraps * 0.55,
-  )
+  // HARD strip: effective space does not count spur cells at all
+  // Odd spurs get an extra virtual penalty of their full length again
+  const effective = Math.max(0, space - spurCells - oddSpurLen)
 
-  return { space, usable, deadEnds, thin, corners, oddTraps, wideCells }
+  return {
+    space,
+    effective,
+    spurCells,
+    oddSpurs,
+    oddSpurLen,
+    deadEnds,
+    thin,
+    wideCells,
+  }
 }
 
 function advance(
@@ -358,15 +426,10 @@ function safeFoodFirst(
   if (!fr) return null
 
   const qAfter = roomQuality(s, obstacles, fr)
-  if (snake.length >= 35) {
-    if (qAfter.usable < Math.max(10, Math.floor(snake.length * 0.18))) return null
-    // trap pocket: mostly thin/dead structure
-    if (
-      qAfter.thin + qAfter.deadEnds > qAfter.wideCells + 3 &&
-      qAfter.usable < snake.length * 0.4
-    ) {
-      return null
-    }
+  // Must have real (spur-stripped) room after eat
+  if (snake.length >= 30) {
+    if (qAfter.effective < Math.max(8, Math.floor(snake.length * 0.2))) return null
+    if (qAfter.oddSpurs > 0 && qAfter.effective < snake.length * 0.35) return null
   }
   if (snake.length >= 100 && qAfter.space < Math.floor(snake.length * 0.3)) return null
 
@@ -386,32 +449,34 @@ function evaluate(
   const tpl = tailPathLen(snake, obstacles, frozen)
   const moves = legal(snake, obstacles, frozen)
 
-  if (!rt && rq.space < len + 12) return -1e12
+  if (!rt && rq.effective < len + 8) return -1e12
 
   let score = 0
   if (rt) score += 5_000_000 + Math.max(tpl, 0) * 800
   else score -= 2_000_000
 
-  score += rq.usable * 750
-  score += rq.wideCells * 400
-  score += rq.space * 60
+  // Score EFFECTIVE space only — raw space that includes odd spurs is a lie
+  score += rq.effective * 900
+  score += rq.wideCells * 300
+  score += rq.space * 20 // tiny raw credit
 
-  score -= rq.deadEnds * 5000
-  score -= rq.thin * 4200
-  score -= rq.oddTraps * 2800
-  score -= rq.corners * 800
+  // Explicit anti-fake-exit
+  score -= rq.spurCells * 6000
+  score -= rq.oddSpurs * 40_000
+  score -= rq.oddSpurLen * 8000
+  score -= rq.deadEnds * 2000
+  score -= Math.max(0, rq.thin - rq.wideCells) * 1500
 
   score += moves.length * 5000
 
   const h = snake[0]
   const fd = Math.abs(h.x - food.x) + Math.abs(h.y - food.y)
-  if (rt && rq.usable > len * 1.6 && moves.length >= 2) score -= fd * 90
-  else if (rt && rq.usable > len * 1.1) score -= fd * 25
+  if (rt && rq.effective > len * 1.5 && moves.length >= 2) score -= fd * 90
+  else if (rt && rq.effective > len * 1.1) score -= fd * 25
   else score -= fd * 3
 
   if (moves.length <= 1) score -= 80_000
-  if (rq.usable < len + 3) score -= 130_000
-  if (rq.thin > rq.wideCells && rq.usable < len * 1.5) score -= 100_000
+  if (rq.effective < len + 3) score -= 150_000
 
   if (ate) score += rt ? 25_000 : -3_000_000
 
@@ -420,40 +485,27 @@ function evaluate(
     const r = advance(snake, food, frozen, m)
     if (!reachTail(r.snake, obstacles, r.frozen)) continue
     const cq = roomQuality(r.snake, obstacles, r.frozen)
-    if (cq.usable >= Math.min(r.snake.length, 8)) kids++
+    if (cq.effective >= Math.min(r.snake.length, 8) && cq.oddSpurs === 0) kids++
+    else if (cq.effective >= Math.min(r.snake.length, 8)) kids += 0.3 as unknown as number
   }
-  score += kids * 9000
+  // keep integer
+  score += Math.floor(kids) * 9000
 
   return score
 }
 
-/** True if step leaves the head in a thin-corridor / odd-trap pocket. */
-function afterStepIsThinTrap(
-  snake: Position[],
-  food: Position,
-  obstacles: Position[],
-  frozen: boolean,
-  next: Position,
-): boolean {
-  const r = advance(snake, food, frozen, next)
-  const rq = roomQuality(r.snake, obstacles, r.frozen)
-
-  fillDeadly(r.snake, obstacles, r.frozen, deadly2)
-  const h = r.snake[0]
-  deadly2[cell(h.x, h.y)] = 0
-  let local = 0
-  for (let d = 0; d < 4; d++) {
-    const nx = h.x + DX[d]
-    const ny = h.y + DY[d]
-    if (!inGrid(nx, ny)) continue
-    if (deadly2[cell(nx, ny)]) continue
-    local++
-  }
-
-  if (local <= 1 && rq.thin + rq.deadEnds >= rq.wideCells) return true
-  if (local <= 1 && rq.oddTraps >= 3) return true
-  if (rq.oddTraps >= 5 && rq.wideCells <= 2 && rq.usable < r.snake.length + 6) return true
-  return false
+/** Prefer moves that reduce odd-spur inventory / don't create new ones. */
+function spurDelta(
+  before: RoomQ,
+  after: RoomQ,
+): number {
+  // positive = worse
+  return (
+    (after.oddSpurs - before.oddSpurs) * 100 +
+    (after.oddSpurLen - before.oddSpurLen) * 20 +
+    (after.spurCells - before.spurCells) * 5 -
+    (after.effective - before.effective)
+  )
 }
 
 export function findSafeDirection(
@@ -471,16 +523,32 @@ export function findSafeDirection(
   const foodStep = safeFoodFirst(snake, food, obstacles, tailFrozen)
   if (foodStep) return dirOf(head, foodStep)
 
+  const before = roomQuality(snake, obstacles, tailFrozen)
+
   const keep = moves.filter((m) => {
     const r = advance(snake, food, tailFrozen, m)
     return reachTail(r.snake, obstacles, r.frozen)
   })
   let pool = keep.length > 0 ? keep : moves
 
-  // Prefer not entering 1-wide / odd dead corridors when wider options exist
+  // Among keepers: prefer moves that do not increase odd spurs when alternatives exist
   if (pool.length > 1) {
-    const fat = pool.filter((m) => !afterStepIsThinTrap(snake, food, obstacles, tailFrozen, m))
-    if (fat.length > 0) pool = fat
+    const scored = pool.map((m) => {
+      const r = advance(snake, food, tailFrozen, m)
+      const after = roomQuality(r.snake, obstacles, r.frozen)
+      return { m, after, delta: spurDelta(before, after) }
+    })
+    const bestDelta = Math.min(...scored.map((s) => s.delta))
+    // allow near-best deltas only
+    const filtered = scored.filter((s) => s.delta <= bestDelta + 5).map((s) => s.m)
+    if (filtered.length > 0) pool = filtered
+
+    // hard: if some move has 0 odd spurs after, drop those that create odd spurs
+    const noOdd = scored.filter((s) => s.after.oddSpurs === 0).map((s) => s.m)
+    if (noOdd.length > 0) {
+      const keepNoOdd = noOdd.filter((m) => pool.some((p) => p.x === m.x && p.y === m.y))
+      if (keepNoOdd.length > 0) pool = keepNoOdd
+    }
   }
 
   let best = pool[0]
@@ -488,7 +556,9 @@ export function findSafeDirection(
   for (const m of pool) {
     const r = advance(snake, food, tailFrozen, m)
     let sc = evaluate(r.snake, food, obstacles, r.frozen, r.ate)
-    if (afterStepIsThinTrap(snake, food, obstacles, tailFrozen, m)) sc -= 180_000
+    const after = roomQuality(r.snake, obstacles, r.frozen)
+    sc -= spurDelta(before, after) * 500
+    if (after.oddSpurs > before.oddSpurs) sc -= 200_000
     if (sc > bestScore) {
       bestScore = sc
       best = m
