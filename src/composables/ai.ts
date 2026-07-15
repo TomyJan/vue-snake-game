@@ -436,6 +436,19 @@ function simulateFoodPath(
       return { ok: false, first: null }
     }
   }
+  // Mid/long: death cluster is self at len 64–150 — demand real room + exit after eat
+  if (snake.length >= 55) {
+    if (qAfter.effective < Math.floor(snake.length * 0.28)) return { ok: false, first: null }
+    if (qAfter.deadEnds >= 3 && qAfter.wideCells < 4) return { ok: false, first: null }
+    const exits = legal(s, obstacles, fr).filter((m) => {
+      const r = advance(s, food, fr, m)
+      return reachTail(r.snake, obstacles, r.frozen)
+    }).length
+    if (exits < 1) return { ok: false, first: null }
+    if (snake.length >= 90 && exits < 2 && qAfter.effective < snake.length * 0.4) {
+      return { ok: false, first: null }
+    }
+  }
   if (snake.length >= 100 && qAfter.space < Math.floor(snake.length * 0.3)) {
     return { ok: false, first: null }
   }
@@ -485,6 +498,16 @@ function safeFoodFirst(
   return best
 }
 
+/** Count legal next moves that still reach tail (true mobility). */
+function safeMobility(snake: Position[], food: Position, obstacles: Position[], frozen: boolean): number {
+  let n = 0
+  for (const m of legal(snake, obstacles, frozen)) {
+    const r = advance(snake, food, frozen, m)
+    if (reachTail(r.snake, obstacles, r.frozen)) n++
+  }
+  return n
+}
+
 function evaluate(
   snake: Position[],
   food: Position,
@@ -497,6 +520,7 @@ function evaluate(
   const rq = roomQuality(snake, obstacles, frozen)
   const tpl = tailPathLen(snake, obstacles, frozen)
   const moves = legal(snake, obstacles, frozen)
+  const mob = safeMobility(snake, food, obstacles, frozen)
 
   if (!rt && rq.effective < len + 8) return -1e12
 
@@ -506,39 +530,48 @@ function evaluate(
 
   // Score EFFECTIVE space only — raw space that includes odd spurs is a lie
   score += rq.effective * 900
-  score += rq.wideCells * 300
-  score += rq.space * 20 // tiny raw credit
+  score += rq.wideCells * 350
+  score += rq.space * 20
 
-  // Explicit anti-fake-exit
+  // Explicit anti-fake-exit / pocket
   score -= rq.spurCells * 6000
   score -= rq.oddSpurs * 40_000
   score -= rq.oddSpurLen * 8000
-  score -= rq.deadEnds * 2000
-  score -= Math.max(0, rq.thin - rq.wideCells) * 1500
+  score -= rq.deadEnds * 2500
+  score -= Math.max(0, rq.thin - rq.wideCells) * 1800
 
-  score += moves.length * 5000
+  score += moves.length * 4000
+  score += mob * 12_000
 
   const h = snake[0]
   const fd = Math.abs(h.x - food.x) + Math.abs(h.y - food.y)
-  if (rt && rq.effective > len * 1.5 && moves.length >= 2) score -= fd * 90
-  else if (rt && rq.effective > len * 1.1) score -= fd * 25
+  // Mid-game: less aggressive food pull (self deaths 64–150)
+  const foodW =
+    len >= 100 ? 12 : len >= 55 ? 35 : rt && rq.effective > len * 1.5 && mob >= 2 ? 90 : rt ? 25 : 3
+  if (rt && rq.effective > len * 1.05) score -= fd * foodW
   else score -= fd * 3
 
-  if (moves.length <= 1) score -= 80_000
+  if (mob <= 1) score -= 120_000
+  if (mob === 0) score -= 500_000
   if (rq.effective < len + 3) score -= 150_000
+  // pocket: lots of space but only 1 safe exit
+  if (len >= 50 && mob === 1 && rq.effective < len * 0.5) score -= 200_000
 
   if (ate) score += rt ? 25_000 : -3_000_000
 
+  // 2-ply: how many grandchildren stay tail-reachable with decent effective room
   let kids = 0
+  const needEff = Math.max(6, Math.min(len, Math.floor(len * 0.12)))
   for (const m of moves) {
     const r = advance(snake, food, frozen, m)
     if (!reachTail(r.snake, obstacles, r.frozen)) continue
     const cq = roomQuality(r.snake, obstacles, r.frozen)
-    if (cq.effective >= Math.min(r.snake.length, 8) && cq.oddSpurs === 0) kids++
-    else if (cq.effective >= Math.min(r.snake.length, 8)) kids += 0.3 as unknown as number
+    if (cq.effective < needEff) continue
+    const m2 = safeMobility(r.snake, food, obstacles, r.frozen)
+    if (m2 >= 1 && cq.oddSpurs === 0) kids += 2
+    else if (m2 >= 1) kids += 1
   }
-  // keep integer
-  score += Math.floor(kids) * 9000
+  score += kids * 5000
 
   return score
 }
@@ -587,10 +620,19 @@ export function findSafeDirection(
     const r = advance(snake, food, tailFrozen, m)
     return reachTail(r.snake, obstacles, r.frozen)
   })
-  let pool = keep.length > 0 ? keep : moves
+  // Prefer moves with residual mobility ≥2 when available (anti pocket)
+  let keepOpen = keep
+  if (snake.length >= 50 && keep.length > 1) {
+    const open = keep.filter((m) => {
+      const r = advance(snake, food, tailFrozen, m)
+      return safeMobility(r.snake, food, obstacles, r.frozen) >= 2
+    })
+    if (open.length > 0) keepOpen = open
+  }
+  let pool = keepOpen.length > 0 ? keepOpen : keep.length > 0 ? keep : moves
 
   // Mid/long snake: soft bias to longest tail-path step when it does not worsen odd spurs
-  if (snake.length >= 80 && keep.length > 1) {
+  if (snake.length >= 70 && keep.length > 1) {
     const { head: hh, tail } = prepSearch(snake, obstacles, tailFrozen, deadly2)
     const tp = bfs(deadly2, hh, tail, true)
     if (tp && tp.length > 3) {
