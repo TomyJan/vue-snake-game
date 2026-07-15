@@ -20,6 +20,7 @@ A modern Snake game built with Vue 3 + TypeScript, developed by AI under [OpenCl
 | [`23fadfe`](https://github.com/TomyJan/vue-snake-game/commit/23fadfe) | 重写 AI：replan-safe 食物路径 + 尾可达绕路 |
 | [`a589b6d`](https://github.com/TomyJan/vue-snake-game/commit/a589b6d) | 惩罚 1-wide / 奇数死走廊 |
 | [`1e4dd19`](https://github.com/TomyJan/vue-snake-game/commit/1e4dd19) | 从有效空间中硬剔除 odd 1-wide spur（根因：raw flood 把假出路当空间） |
+| （本轮持续） | 备选安全吃豆路径 + `analyzeRoom` 单测 + 长蛇软跟尾；见最新 `main` |
 
 > 更早标有 `TomyJan` / `TomyJanClaw`、且落在上表「早期建设」时间线内的提交，按 **mimo-v2.5 时代** 记；若某次会话临时切过模型，以该次对话与默认配置为准。当前默认模型为 **MoeAI/grok-4.5**。
 
@@ -131,6 +132,7 @@ src/
 | 旧 flood / 迭代基线 | mimo 时代 | 50 局 | ~900–950 |
 | replan-safe 重写 `23fadfe` | Grok-4.5 | 40 局 | ~1712 |
 | spur 剔除 `1e4dd19` | Grok-4.5 | 20 局 | ~2005 |
+| 备选吃豆路径 + 长蛇软跟尾 | Grok-4.5 | 20 局 | ~2052 |
 
 数字随随机障碍波动，仅作回归参考。
 
