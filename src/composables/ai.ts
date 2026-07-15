@@ -403,15 +403,15 @@ function advance(
   return { snake: ns, frozen: ate, ate }
 }
 
-function safeFoodFirst(
+/** Simulate following a path; return post-state if replan-safe + post-eat ok. */
+function simulateFoodPath(
   snake: Position[],
   food: Position,
   obstacles: Position[],
   frozen: boolean,
-): Position | null {
-  const { head } = prepSearch(snake, obstacles, frozen, deadly)
-  const path = bfs(deadly, head, food, false)
-  if (!path || path.length === 0) return null
+  path: Position[],
+): { ok: boolean; first: Position | null } {
+  if (!path || path.length === 0) return { ok: false, first: null }
 
   let s = copySnake(snake)
   let fr = frozen
@@ -420,20 +420,69 @@ function safeFoodFirst(
     s = r.snake
     fr = r.frozen
     if (!reachTail(s, obstacles, fr)) {
-      if (!(r.ate && spaceOf(s, obstacles, fr) >= s.length + 12)) return null
+      if (!(r.ate && spaceOf(s, obstacles, fr) >= s.length + 12)) {
+        return { ok: false, first: null }
+      }
     }
   }
-  if (!fr) return null
+  if (!fr) return { ok: false, first: null }
 
   const qAfter = roomQuality(s, obstacles, fr)
-  // Must have real (spur-stripped) room after eat
   if (snake.length >= 30) {
-    if (qAfter.effective < Math.max(8, Math.floor(snake.length * 0.2))) return null
-    if (qAfter.oddSpurs > 0 && qAfter.effective < snake.length * 0.35) return null
+    if (qAfter.effective < Math.max(8, Math.floor(snake.length * 0.2))) {
+      return { ok: false, first: null }
+    }
+    if (qAfter.oddSpurs > 0 && qAfter.effective < snake.length * 0.35) {
+      return { ok: false, first: null }
+    }
   }
-  if (snake.length >= 100 && qAfter.space < Math.floor(snake.length * 0.3)) return null
+  if (snake.length >= 100 && qAfter.space < Math.floor(snake.length * 0.3)) {
+    return { ok: false, first: null }
+  }
 
-  return path[0]
+  return { ok: true, first: path[0] }
+}
+
+function safeFoodFirst(
+  snake: Position[],
+  food: Position,
+  obstacles: Position[],
+  frozen: boolean,
+): Position | null {
+  const { head } = prepSearch(snake, obstacles, frozen, deadly)
+  const path = bfs(deadly, head, food, false)
+  const primary = simulateFoodPath(snake, food, obstacles, frozen, path || [])
+  if (primary.ok && primary.first) return primary.first
+
+  // Alternate first steps: any legal step that still has a replan-safe food path after
+  const moves = legal(snake, obstacles, frozen)
+  let best: Position | null = null
+  let bestLen = Infinity
+  for (const m of moves) {
+    // don't reverse into food path that starts opposite of primary without check
+    const r0 = advance(snake, food, frozen, m)
+    if (r0.ate) {
+      // eating in one step
+      if (reachTail(r0.snake, obstacles, r0.frozen)) {
+        const q = roomQuality(r0.snake, obstacles, r0.frozen)
+        if (q.effective >= Math.max(4, Math.floor(snake.length * 0.15))) return m
+      }
+      continue
+    }
+    if (!reachTail(r0.snake, obstacles, r0.frozen)) continue
+    const { head: h2 } = prepSearch(r0.snake, obstacles, r0.frozen, deadly2)
+    const p2 = bfs(deadly2, h2, food, false)
+    if (!p2 || p2.length === 0) continue
+    // rebuild full path as m + p2
+    const full = [m, ...p2]
+    const sim = simulateFoodPath(snake, food, obstacles, frozen, full)
+    if (!sim.ok) continue
+    if (full.length < bestLen) {
+      bestLen = full.length
+      best = m
+    }
+  }
+  return best
 }
 
 function evaluate(
@@ -508,6 +557,15 @@ function spurDelta(
   )
 }
 
+/** Test / debug export of room quality metrics. */
+export function analyzeRoom(
+  snake: Position[],
+  obstacles: Position[],
+  frozen: boolean,
+): RoomQ {
+  return roomQuality(snake, obstacles, frozen)
+}
+
 export function findSafeDirection(
   snake: Position[],
   food: Position,
@@ -531,6 +589,23 @@ export function findSafeDirection(
   })
   let pool = keep.length > 0 ? keep : moves
 
+  // Mid/long snake: soft bias to longest tail-path step when it does not worsen odd spurs
+  if (snake.length >= 80 && keep.length > 1) {
+    const { head: hh, tail } = prepSearch(snake, obstacles, tailFrozen, deadly2)
+    const tp = bfs(deadly2, hh, tail, true)
+    if (tp && tp.length > 3) {
+      const step0 = tp[0]
+      if (keep.some((m) => m.x === step0.x && m.y === step0.y)) {
+        const r = advance(snake, food, tailFrozen, step0)
+        const after = roomQuality(r.snake, obstacles, r.frozen)
+        if (after.oddSpurs <= before.oddSpurs && after.effective >= before.effective - 2) {
+          // Prefer as candidate, still score below
+          pool = [step0, ...pool.filter((m) => !(m.x === step0.x && m.y === step0.y))]
+        }
+      }
+    }
+  }
+
   // Among keepers: prefer moves that do not increase odd spurs when alternatives exist
   if (pool.length > 1) {
     const scored = pool.map((m) => {
@@ -539,11 +614,9 @@ export function findSafeDirection(
       return { m, after, delta: spurDelta(before, after) }
     })
     const bestDelta = Math.min(...scored.map((s) => s.delta))
-    // allow near-best deltas only
     const filtered = scored.filter((s) => s.delta <= bestDelta + 5).map((s) => s.m)
     if (filtered.length > 0) pool = filtered
 
-    // hard: if some move has 0 odd spurs after, drop those that create odd spurs
     const noOdd = scored.filter((s) => s.after.oddSpurs === 0).map((s) => s.m)
     if (noOdd.length > 0) {
       const keepNoOdd = noOdd.filter((m) => pool.some((p) => p.x === m.x && p.y === m.y))
@@ -559,6 +632,7 @@ export function findSafeDirection(
     const after = roomQuality(r.snake, obstacles, r.frozen)
     sc -= spurDelta(before, after) * 500
     if (after.oddSpurs > before.oddSpurs) sc -= 200_000
+    if (snake.length >= 80) sc += Math.max(0, tailPathLen(r.snake, obstacles, r.frozen)) * 400
     if (sc > bestScore) {
       bestScore = sc
       best = m
